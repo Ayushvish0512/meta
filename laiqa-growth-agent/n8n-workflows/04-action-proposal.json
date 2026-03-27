@@ -1,0 +1,75 @@
+{
+  "name": "04 - Action Proposal Queue (Human-in-Loop)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "action-proposal",
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{ "value1": "={{$json.compliance_verdict}}", "operation": "equals", "value2": "PASS" }]
+        }
+      },
+      "name": "Compliance Gate",
+      "type": "n8n-nodes-base.if",
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status) VALUES ('{{$json.plan_id}}', NOW()::date, '{{$env.META_AD_ACCOUNT_ID}}', '{{$json.actions}}'::jsonb, 'PASS', 'PENDING_APPROVAL') RETURNING plan_id;"
+      },
+      "name": "Save Action Plan",
+      "type": "n8n-nodes-base.postgres",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "body": {
+          "blocks": [
+            {
+              "type": "section",
+              "text": { "type": "mrkdwn", "text": "🤖 *New Action Plan Ready for Approval*\nPlan ID: `{{$json.plan_id}}`\n\n{{$json.summary}}" }
+            },
+            {
+              "type": "actions",
+              "elements": [
+                { "type": "button", "text": { "type": "plain_text", "text": "✅ Approve" }, "style": "primary", "value": "APPROVED", "action_id": "approve_plan" },
+                { "type": "button", "text": { "type": "plain_text", "text": "❌ Reject" }, "style": "danger", "value": "REJECTED", "action_id": "reject_plan" }
+              ]
+            }
+          ]
+        }
+      },
+      "name": "Send Approval Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "body": { "text": "⛔ Action plan blocked by Compliance Agent. Review required.\nPlan: {{$json.plan_id}}" }
+      },
+      "name": "Notify Compliance Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [700, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Compliance Gate" }]] },
+    "Compliance Gate": {
+      "main": [
+        [{ "node": "Save Action Plan" }],
+        [{ "node": "Notify Compliance Fail" }]
+      ]
+    },
+    "Save Action Plan": { "main": [[{ "node": "Send Approval Request" }]] }
+  }
+}

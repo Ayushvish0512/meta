@@ -1,0 +1,59 @@
+{
+  "name": "02 - Embedding Refresh",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "embedding-refresh",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 'PERFORMANCE_CARD' as doc_type, entity_id || '_' || date::text as doc_id,\n  'DOC_TYPE=PERFORMANCE_CARD\\nDATE=' || date || '\\nLEVEL=' || entity_level || '\\nID=' || entity_id ||\n  '\\nSPEND=' || spend || '\\nIMPRESSIONS=' || impressions || '\\nCLICKS=' || clicks ||\n  '\\nCONVERSIONS=' || conversions || '\\nFREQUENCY=' || ROUND(frequency,2) ||\n  '\\nCTR=' || ROUND(ctr*100,3) || '%\\nCPA=' || COALESCE(cpa::text,'N/A') as text_content,\n  json_build_object('doc_type','PERFORMANCE_CARD','entity_level',entity_level,'entity_id',entity_id,'date',date::text,'funnel_stage','PERFORMANCE') as metadata\nFROM meta_insights_daily\nWHERE date >= NOW() - INTERVAL '30 days'\n  AND entity_level IN ('adset','ad')\nORDER BY date DESC\nLIMIT 500;"
+      },
+      "name": "Fetch Performance Cards",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sanitise text before embedding\nconst items = $input.all();\nconst sanitised = [];\nfor (const item of items) {\n  // Strip anything that looks like PII (basic pass; full sanitiser service handles deeper redaction)\n  const clean = item.json.text_content\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, '[EMAIL]')\n    .replace(/\\+?[0-9]{10,13}/g, '[PHONE]');\n  sanitised.push({ json: { ...item.json, text_content: clean } });\n}\nreturn sanitised;"
+      },
+      "name": "Sanitise Text",
+      "type": "n8n-nodes-base.code",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://vector-bridge:8002/upsert",
+        "body": {
+          "doc_id": "={{$json.doc_id}}",
+          "text": "={{$json.text_content}}",
+          "metadata": "={{$json.metadata}}"
+        },
+        "options": { "retry": { "enabled": true, "maxTries": 3 } }
+      },
+      "name": "Upsert to Chroma",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO embedding_job_runs (doc_type, doc_count, status) VALUES ('PERFORMANCE_CARD', {{$items().length}}, 'SUCCESS');"
+      },
+      "name": "Log Job Run",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1180, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Fetch Performance Cards" }]] },
+    "Fetch Performance Cards": { "main": [[{ "node": "Sanitise Text" }]] },
+    "Sanitise Text": { "main": [[{ "node": "Upsert to Chroma" }]] },
+    "Upsert to Chroma": { "main": [[{ "node": "Log Job Run" }]] }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "name": "05 - Action Execution (Meta Writes + Rollback)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Approval Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "action-approved",
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{ "value1": "={{$json.decision}}", "operation": "equals", "value2": "APPROVED" }]
+        }
+      },
+      "name": "Check Approved",
+      "type": "n8n-nodes-base.if",
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ap.*, a.decision FROM action_plans ap JOIN approvals a ON ap.plan_id = a.plan_id WHERE ap.plan_id = '{{$json.plan_id}}' AND a.decision = 'APPROVED';"
+      },
+      "name": "Load Approved Plan",
+      "type": "n8n-nodes-base.postgres",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hard safety rules before any Meta write\nconst plan = $input.item.json;\nconst actions = plan.actions || [];\nconst maxBudgetChangePct = parseFloat($env.MAX_DAILY_BUDGET_CHANGE_PCT || 20);\nconst minConversions = parseInt($env.MIN_CONVERSIONS_FOR_SCALE || 10);\n\nconst safeActions = actions.filter(action => {\n  // Block scale if insufficient conversions\n  if (action.action_type === 'scale_budget') {\n    if ((action.conversions || 0) < minConversions) {\n      console.log(`BLOCKED scale on ${action.entity_id}: insufficient conversions`);\n      return false;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs((action.delta?.budget_change_pct || 0));\n    if (changePct > maxBudgetChangePct) {\n      console.log(`BLOCKED scale on ${action.entity_id}: budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%`);\n      return false;\n    }\n  }\n  return true;\n});\n\nreturn safeActions.map(a => ({ json: { ...a, plan_id: plan.plan_id } }));"
+      },
+      "name": "Enforce Hard Rules",
+      "type": "n8n-nodes-base.code",
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$json.entity_id}}",
+        "queryParameters": { "parameters": [{ "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" }] },
+        "body": "={{$json.action_type === 'pause' ? '{\"status\":\"PAUSED\"}' : JSON.stringify($json.delta || {})}}"
+      },
+      "name": "Execute Meta API Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1180, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO actions_executed (plan_id, entity_level, entity_id, action_type, meta_api_call, meta_api_response, status, executed_at) VALUES ('{{$json.plan_id}}', '{{$json.entity_level}}', '{{$json.entity_id}}', '{{$json.action_type}}', '{{JSON.stringify($json)}}'::jsonb, '{{JSON.stringify($json.response)}}'::jsonb, 'EXECUTED', NOW());"
+      },
+      "name": "Log Execution",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1420, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "body": { "text": "✅ Action executed: {{$json.action_type}} on {{$json.entity_id}}\nPlan: {{$json.plan_id}}\n\nTo rollback, re-enable the entity manually in Ads Manager or trigger the rollback workflow." }
+      },
+      "name": "Confirm + Rollback Instructions",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1420, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE action_plans SET status = 'REJECTED' WHERE plan_id = '{{$json.plan_id}}';"
+      },
+      "name": "Mark Rejected",
+      "type": "n8n-nodes-base.postgres",
+      "position": [700, 500]
+    }
+  ],
+  "connections": {
+    "Approval Webhook": { "main": [[{ "node": "Check Approved" }]] },
+    "Check Approved": {
+      "main": [
+        [{ "node": "Load Approved Plan" }],
+        [{ "node": "Mark Rejected" }]
+      ]
+    },
+    "Load Approved Plan": { "main": [[{ "node": "Enforce Hard Rules" }]] },
+    "Enforce Hard Rules": { "main": [[{ "node": "Execute Meta API Call" }]] },
+    "Execute Meta API Call": { "main": [[{ "node": "Log Execution" }, { "node": "Confirm + Rollback Instructions" }]] }
+  }
+}

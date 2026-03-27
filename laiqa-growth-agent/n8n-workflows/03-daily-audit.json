@@ -1,0 +1,185 @@
+{
+  "name": "03 - Daily Audit (Multi-Agent)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "daily-audit",
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT entity_level, entity_id, date, spend, impressions, reach, clicks, conversions, frequency, ctr, cpa FROM meta_insights_daily WHERE date >= NOW() - INTERVAL '7 days' ORDER BY date DESC, spend DESC LIMIT 100;"
+      },
+      "name": "Fetch 7-Day KPI Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://vector-bridge:8002/query",
+        "body": {
+          "query": "ad sets with declining CTR and rising frequency last 7 days",
+          "top_k": 8,
+          "where": { "doc_type": { "$in": ["PERFORMANCE_CARD", "BUSINESS_STRATEGY"] } }
+        }
+      },
+      "name": "Retrieve Fatigue Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
+        "body": {
+          "contents": [{
+            "role": "user",
+            "parts": [{
+              "text": "={{\"You are the Strategy Agent for Laiqa, a women's hormonal health brand. Analyse the KPI snapshot and retrieved context. Return ONLY valid JSON matching the schema.\\n\\nKPI SNAPSHOT:\\n\" + JSON.stringify($('Fetch 7-Day KPI Snapshot').all().map(i=>i.json)) + \"\\n\\nRAG CONTEXT:\\n\" + JSON.stringify($('Retrieve Fatigue Context').item.json.results)}}"
+            }]
+          }],
+          "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+              "type": "object",
+              "required": ["summary", "top_issues", "hypotheses", "confidence"],
+              "properties": {
+                "summary": { "type": "string" },
+                "confidence": { "type": "number" },
+                "top_issues": { "type": "array", "items": { "type": "string" } },
+                "hypotheses": { "type": "array", "items": { "type": "object", "properties": { "hypothesis": { "type": "string" }, "evidence": { "type": "string" } } } }
+              }
+            }
+          }
+        }
+      },
+      "name": "Strategy Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
+        "body": {
+          "contents": [{
+            "role": "user",
+            "parts": [{
+              "text": "={{\"You are the Optimisation Agent. TARGET_CPA=\" + $env.TARGET_CPA + \" TARGET_ROAS=\" + $env.TARGET_ROAS + \" MAX_BUDGET_CHANGE_PCT=\" + $env.MAX_DAILY_BUDGET_CHANGE_PCT + \"\\n\\nKPI SNAPSHOT:\\n\" + JSON.stringify($('Fetch 7-Day KPI Snapshot').all().map(i=>i.json)) + \"\\n\\nReturn ONLY valid JSON matching the schema. Do NOT propose budget changes exceeding the cap.\"}}"
+            }]
+          }],
+          "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+              "type": "object",
+              "required": ["actions", "summary", "confidence"],
+              "properties": {
+                "summary": { "type": "string" },
+                "confidence": { "type": "number" },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["entity_level", "entity_id", "action_type", "rationale", "risk"],
+                    "properties": {
+                      "entity_level": { "type": "string", "enum": ["campaign", "adset", "ad"] },
+                      "entity_id": { "type": "string" },
+                      "action_type": { "type": "string", "enum": ["pause", "scale_budget", "refresh_creative", "reallocate"] },
+                      "rationale": { "type": "string" },
+                      "risk": { "type": "string", "enum": ["low", "medium", "high"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "name": "Optimisation Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [700, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
+        "body": {
+          "contents": [{
+            "role": "user",
+            "parts": [{
+              "text": "You are the Compliance Agent for Laiqa, a women's health brand. Review the proposed ad copy variants below for Meta policy violations.\n\nHard-fail rules:\n1. No personal attribute assertions (e.g. 'Do you have PCOS?', 'Are you struggling with hormones?')\n2. No negative self-perception framing (body shame, fear-based health claims)\n3. No requests for private/medical information\n4. No unsubstantiated medical claims\n\nReturn ONLY valid JSON with verdict for each item.\n\nPROPOSED COPY: {{$json.copy_variants}}"
+            }]
+          }],
+          "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+              "type": "object",
+              "required": ["verdicts", "overall_status"],
+              "properties": {
+                "overall_status": { "type": "string", "enum": ["PASS", "FAIL", "NEEDS_REVISION"] },
+                "verdicts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "copy_id": { "type": "string" },
+                      "status": { "type": "string", "enum": ["PASS", "FAIL"] },
+                      "violations": { "type": "array", "items": { "type": "string" } },
+                      "suggested_rewrite": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "name": "Compliance Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [700, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "const strategy = $('Strategy Agent').item.json.candidates[0].content.parts[0].text;\nconst optimisation = $('Optimisation Agent').item.json.candidates[0].content.parts[0].text;\nconst compliance = $('Compliance Agent').item.json.candidates[0].content.parts[0].text;\n\nconst strategyData = JSON.parse(strategy);\nconst optimisationData = JSON.parse(optimisation);\nconst complianceData = JSON.parse(compliance);\n\nconst report = {\n  date: new Date().toISOString().split('T')[0],\n  account_id: $env.META_AD_ACCOUNT_ID,\n  strategy: strategyData,\n  optimisation: optimisationData,\n  compliance: complianceData,\n  generated_at: new Date().toISOString()\n};\n\n// Format Slack message\nconst slackText = [\n  `*📊 Laiqa Daily Growth Report - ${report.date}*`,\n  `*Strategy Summary:* ${strategyData.summary}`,\n  `*Top Issues:* ${(strategyData.top_issues || []).join(', ')}`,\n  `*Proposed Actions:* ${optimisationData.actions?.length || 0} actions queued`,\n  `*Compliance:* ${complianceData.overall_status}`,\n  `*Confidence:* ${Math.round((strategyData.confidence || 0) * 100)}%`\n].join('\\n');\n\nreturn [{ json: { report, slackText } }];"
+      },
+      "name": "Assemble Report Bundle",
+      "type": "n8n-nodes-base.code",
+      "position": [940, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "body": { "text": "={{$json.slackText}}" }
+      },
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1180, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agent_runs (run_id, agent_name, task_type, outputs_json, schema_valid, status, completed_at) VALUES (gen_random_uuid()::text, 'DAILY_AUDIT_BUNDLE', 'DAILY_AUDIT', '{{$json.report}}'::jsonb, true, 'COMPLETED', NOW());"
+      },
+      "name": "Log Agent Run",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1180, 700]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Fetch 7-Day KPI Snapshot" }, { "node": "Retrieve Fatigue Context" }]] },
+    "Fetch 7-Day KPI Snapshot": { "main": [[{ "node": "Strategy Agent" }, { "node": "Optimisation Agent" }]] },
+    "Retrieve Fatigue Context": { "main": [[{ "node": "Strategy Agent" }]] },
+    "Strategy Agent": { "main": [[{ "node": "Assemble Report Bundle" }]] },
+    "Optimisation Agent": { "main": [[{ "node": "Assemble Report Bundle" }]] },
+    "Compliance Agent": { "main": [[{ "node": "Assemble Report Bundle" }]] },
+    "Assemble Report Bundle": { "main": [[{ "node": "Send to Slack" }, { "node": "Log Agent Run" }]] }
+  }
+}
