@@ -3,12 +3,18 @@ PII Sanitiser Service
 Redacts emails, phone numbers, names, addresses before sending to LLM.
 """
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
 app = FastAPI(title="Laiqa Sanitiser")
+
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY")
+
+async def verify_key(x_api_key: str = Header(...)):
+    if INTERNAL_API_KEY and x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
@@ -28,7 +34,7 @@ class SanitiseResponse(BaseModel):
     sanitised: str
     redacted_count: int
 
-@app.post("/sanitise", response_model=SanitiseResponse)
+@app.post("/sanitise", response_model=SanitiseResponse, dependencies=[Depends(verify_key)])
 def sanitise(req: SanitiseRequest):
     results = analyzer.analyze(
         text=req.text,

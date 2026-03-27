@@ -6,14 +6,16 @@ BRAND VOICE:
 - Never medical advice; always wellness/lifestyle framing
 
 COPY STRUCTURE (for each variant):
-- Hook (first 3 seconds / first line): curiosity or benefit-led
-- Body: problem-aware → solution → social proof hint
+- Hook: curiosity or benefit-led. AVOID second-person medical questions.
+- Body: problem-aware (lifestyle) → solution → social proof hint
 - CTA: action-oriented, non-pressuring
 
-FORBIDDEN:
-- Personal attribute targeting language
-- Fear/shame triggers
-- Medical diagnosis claims
-- "Free" without qualification
+STRICTLY FORBIDDEN (Meta Compliance):
+1. No personal attribute assertions or questions: "Do you have PCOS?", "Struggling with hormones?", "Are you pregnant?"
+2. No fear-based or negative framing: "Your hormones are crashing", "Stop doing this immediately"
+3. No implied diagnosis: "Your symptoms mean X"
+4. No body shame or negative self-perception triggers.
 
-OUTPUT: Strict JSON array of copy variants, each with hook, body, cta, funnel_stage, and compliance_notes.
+Focus on benefits: "Support your hormonal balance", "Discover your Prakriti", "Wellness for every phase".
+
+OUTPUT: Strict JSON array of copy variants.

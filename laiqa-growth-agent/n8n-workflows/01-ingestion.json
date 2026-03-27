@@ -71,20 +71,40 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalise and validate all three insight levels\nconst campaigns = $('Fetch Campaign Insights').item.json.data || [];\nconst adsets = $('Fetch AdSet Insights').item.json.data || [];\nconst ads = $('Fetch Ad Insights').item.json.data || [];\n\nconst allRows = [];\n\nconst normalise = (rows, level, idField) => rows.map(r => ({\n  date: r.date_start,\n  entity_level: level,\n  entity_id: r[idField],\n  impressions: parseInt(r.impressions || 0),\n  reach: parseInt(r.reach || 0),\n  clicks: parseInt(r.clicks || 0),\n  spend: parseFloat(r.spend || 0),\n  conversions: (r.actions || []).filter(a => a.action_type === 'purchase').reduce((s, a) => s + parseInt(a.value), 0),\n  raw_json: JSON.stringify(r)\n}));\n\nallRows.push(...normalise(campaigns, 'campaign', 'campaign_id'));\nallRows.push(...normalise(adsets, 'adset', 'adset_id'));\nallRows.push(...normalise(ads, 'ad', 'ad_id'));\n\n// Completeness check\nconst totalSpend = allRows.filter(r => r.entity_level === 'campaign').reduce((s, r) => s + r.spend, 0);\nif (totalSpend === 0) throw new Error('COMPLETENESS_FAIL: zero spend across all campaigns for yesterday');\n\nreturn allRows.map(r => ({ json: r }));"
+        "mode": "combine",
+        "combineBy": "position"
+      },
+      "name": "Merge Insights",
+      "type": "n8n-nodes-base.merge",
+      "position": [600, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise and validate all three insight levels\n// When using Merge node with combine by position, the data is available in $input.all()\n// However, for simplicity with the existing code, we can reference the specific nodes\nconst campaigns = $('Fetch Campaign Insights').item.json.data || [];\nconst adsets = $('Fetch AdSet Insights').item.json.data || [];\nconst ads = $('Fetch Ad Insights').item.json.data || [];\n\nconst allRows = [];\n\nconst normalise = (rows, level, idField) => rows.map(r => ({\n  date: r.date_start,\n  entity_level: level,\n  entity_id: r[idField],\n  impressions: parseInt(r.impressions || 0),\n  reach: parseInt(r.reach || 0),\n  clicks: parseInt(r.clicks || 0),\n  spend: parseFloat(r.spend || 0),\n  conversions: (r.actions || []).filter(a => a.action_type === 'purchase').reduce((s, a) => s + parseInt(a.value || 0), 0),\n  raw_json: JSON.stringify(r)\n}));\n\nallRows.push(...normalise(campaigns, 'campaign', 'campaign_id'));\nallRows.push(...normalise(adsets, 'adset', 'adset_id'));\nallRows.push(...normalise(ads, 'ad', 'ad_id'));\n\n// Completeness check\nconst totalSpend = allRows.filter(r => r.entity_level === 'campaign').reduce((s, r) => s + r.spend, 0);\nif (totalSpend === 0) throw new Error('COMPLETENESS_FAIL: zero spend across all campaigns for yesterday');\n\nreturn allRows.map(r => ({ json: r }));"
       },
       "name": "Normalise + Validate",
       "type": "n8n-nodes-base.code",
-      "position": [700, 400]
+      "position": [800, 400]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO meta_insights_daily (date, entity_level, entity_id, impressions, reach, clicks, spend, conversions, raw_json)\nVALUES ('{{$json.date}}', '{{$json.entity_level}}', '{{$json.entity_id}}', {{$json.impressions}}, {{$json.reach}}, {{$json.clicks}}, {{$json.spend}}, {{$json.conversions}}, '{{$json.raw_json}}'::jsonb)\nON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET\n  impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, clicks = EXCLUDED.clicks,\n  spend = EXCLUDED.spend, conversions = EXCLUDED.conversions, raw_json = EXCLUDED.raw_json, ingested_at = NOW();"
+        "query": "INSERT INTO meta_insights_daily (date, entity_level, entity_id, impressions, reach, clicks, spend, conversions, raw_json)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)\nON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET\n  impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, clicks = EXCLUDED.clicks,\n  spend = EXCLUDED.spend, conversions = EXCLUDED.conversions, raw_json = EXCLUDED.raw_json, ingested_at = NOW();",
+        "queryParameters": "={{$json.date}},{{$json.entity_level}},{{$json.entity_id}},{{$json.impressions}},{{$json.reach}},{{$json.clicks}},{{$json.spend}},{{$json.conversions}},{{$json.raw_json}}"
       },
       "name": "Upsert to Postgres",
       "type": "n8n-nodes-base.postgres",
-      "position": [940, 400]
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/embedding-refresh",
+        "options": {}
+      },
+      "name": "Trigger Embedding Refresh",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1180, 400]
     },
     {
       "parameters": {
@@ -94,14 +114,16 @@
       },
       "name": "Alert on Failure",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [940, 600]
+      "position": [1000, 600]
     }
   ],
   "connections": {
     "Daily 07:00 IST": { "main": [[{ "node": "Fetch Campaign Insights" }, { "node": "Fetch AdSet Insights" }, { "node": "Fetch Ad Insights" }]] },
-    "Fetch Campaign Insights": { "main": [[{ "node": "Normalise + Validate" }]] },
-    "Fetch AdSet Insights": { "main": [[{ "node": "Normalise + Validate" }]] },
-    "Fetch Ad Insights": { "main": [[{ "node": "Normalise + Validate" }]] },
-    "Normalise + Validate": { "main": [[{ "node": "Upsert to Postgres" }]] }
+    "Fetch Campaign Insights": { "main": [[{ "node": "Merge Insights" }]] },
+    "Fetch AdSet Insights": { "main": [[{ "node": "Merge Insights" }]] },
+    "Fetch Ad Insights": { "main": [[{ "node": "Merge Insights" }]] },
+    "Merge Insights": { "main": [[{ "node": "Normalise + Validate" }]] },
+    "Normalise + Validate": { "main": [[{ "node": "Upsert to Postgres" }]] },
+    "Upsert to Postgres": { "main": [[{ "node": "Trigger Embedding Refresh" }]] }
   }
 }

@@ -10,22 +10,31 @@
     },
     {
       "parameters": {
+        "jsCode": "const plan_id = 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);\nreturn [{ json: { ...$json, plan_id } }];"
+      },
+      "name": "Generate Plan ID",
+      "type": "n8n-nodes-base.code",
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
         "conditions": {
           "string": [{ "value1": "={{$json.compliance_verdict}}", "operation": "equals", "value2": "PASS" }]
         }
       },
       "name": "Compliance Gate",
       "type": "n8n-nodes-base.if",
-      "position": [460, 400]
+      "position": [700, 400]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status) VALUES ('{{$json.plan_id}}', NOW()::date, '{{$env.META_AD_ACCOUNT_ID}}', '{{$json.actions}}'::jsonb, 'PASS', 'PENDING_APPROVAL') RETURNING plan_id;"
+        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status) VALUES ($1, NOW()::date, $2, $3::jsonb, $4, $5) RETURNING plan_id;",
+        "queryParameters": "={{$json.plan_id}},{{$env.META_AD_ACCOUNT_ID}},={{JSON.stringify($json.actions)}},PASS,PENDING_APPROVAL"
       },
       "name": "Save Action Plan",
       "type": "n8n-nodes-base.postgres",
-      "position": [700, 300]
+      "position": [940, 300]
     },
     {
       "parameters": {
@@ -40,8 +49,8 @@
             {
               "type": "actions",
               "elements": [
-                { "type": "button", "text": { "type": "plain_text", "text": "✅ Approve" }, "style": "primary", "value": "APPROVED", "action_id": "approve_plan" },
-                { "type": "button", "text": { "type": "plain_text", "text": "❌ Reject" }, "style": "danger", "value": "REJECTED", "action_id": "reject_plan" }
+                { "type": "button", "text": { "type": "plain_text", "text": "✅ Approve" }, "style": "primary", "value": "={{$json.plan_id}}|APPROVED", "action_id": "approve_plan" },
+                { "type": "button", "text": { "type": "plain_text", "text": "❌ Reject" }, "style": "danger", "value": "={{$json.plan_id}}|REJECTED", "action_id": "reject_plan" }
               ]
             }
           ]
@@ -49,7 +58,7 @@
       },
       "name": "Send Approval Request",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [940, 300]
+      "position": [1180, 300]
     },
     {
       "parameters": {
@@ -59,11 +68,12 @@
       },
       "name": "Notify Compliance Fail",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [700, 500]
+      "position": [940, 500]
     }
   ],
   "connections": {
-    "Webhook Trigger": { "main": [[{ "node": "Compliance Gate" }]] },
+    "Webhook Trigger": { "main": [[{ "node": "Generate Plan ID" }]] },
+    "Generate Plan ID": { "main": [[{ "node": "Compliance Gate" }]] },
     "Compliance Gate": {
       "main": [
         [{ "node": "Save Action Plan" }],

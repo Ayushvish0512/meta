@@ -1,0 +1,26 @@
+Key Fixes Implemented:
+
+   1. Workflow Integrity (WF01, WF03):
+       * Added Merge nodes in 01-ingestion.json and 03-daily-audit.json to correctly synchronize parallel data branches.
+       * Fixed the Strategy Agent context bug where it was receiving only partial data due to a missing merge point.
+   2. Compliance & Copywriting (WF03):
+       * Injected a Copywriting Agent node into the audit workflow to provide input for the Compliance Agent.
+       * Updated the copywriting-agent.txt prompt to strictly forbid problematic hooks (e.g., "Do you have PCOS?") that violate Meta's personal attribute policies.
+   3. Security (Postgres & Services):
+       * Migrated all Postgres nodes to parameterized queries to prevent SQL injection.
+       * Added API Key Authentication (X-API-Key) to both the Sanitiser and Vector Bridge microservices.
+       * Updated workflows to securely pass the INTERNAL_API_KEY in headers.
+   4. Optimization & Token Budgeting:
+       * Implemented a KPI Aggregation node in WF03 to summarize performance data (Top spenders, high-efficiency ads, fatigue candidates). This significantly reduces token consumption and provides higher-signal data to 
+         the LLM.
+       * Added token estimates to the agent_runs logging for cost visibility.
+   5. Human-in-Loop & Approval (WF04, WF05):
+       * Implemented unique plan_id generation at the start of the proposal queue.
+       * Updated Slack button values to include the plan_id, allowing WF05 to correctly identify which plan is being approved.
+       * Added a Slack Payload Parser and fixed the Meta API response logging in WF05.
+   6. Reliability & Automation:
+       * Chained the workflows together: Ingestion (WF01) now triggers Embedding Refresh (WF02), which in turn triggers the Daily Audit (WF03).
+       * Fixed the Vector Bridge bug where it would crash if the requested top_k exceeded the number of documents in the collection.
+       * Implemented a global KILL_SWITCH in the .env and WF05 to immediately disable all Meta write actions if needed.
+   7. Environment Configuration:
+       * Created a comprehensive .env file with placeholders for all necessary credentials, database settings, and business logic thresholds.
