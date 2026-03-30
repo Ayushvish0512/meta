@@ -4,6 +4,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_DB: laiqa
       POSTGRES_USER: laiqa
@@ -22,6 +23,7 @@ services:
   chroma:
     image: chromadb/chroma:latest
     restart: unless-stopped
+    restart: always
     environment:
       CHROMA_SERVER_AUTH_CREDENTIALS: ${CHROMA_AUTH_TOKEN}
       CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER: chromadb.auth.token_authn.TokenConfigServerAuthCredentialsProvider
@@ -34,6 +36,7 @@ services:
   sanitiser:
     build: ./services/sanitiser
     restart: unless-stopped
+    restart: always
     environment:
       PORT: 8001
     ports:
@@ -42,6 +45,7 @@ services:
   vector-bridge:
     build: ./services/vector-bridge
     restart: unless-stopped
+    restart: always
     environment:
       CHROMA_HOST: chroma
       CHROMA_PORT: 8000
@@ -56,6 +60,7 @@ services:
   n8n:
     image: n8nio/n8n:latest
     restart: unless-stopped
+    restart: always
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
