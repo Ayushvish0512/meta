@@ -2,249 +2,325 @@
   "name": "03 - Daily Audit (Multi-Agent)",
   "nodes": [
     {
-      "parameters": {},
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "daily-audit",
+        "responseMode": "onReceived",
+        "options": {}
+      },
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "webhookId": "daily-audit",
-      "position": [240, 400]
+      "position": [240, 400],
+      "id": "wf03-trigger",
+      "typeVersion": 1.1
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT entity_level, entity_id, date, spend, impressions, reach, clicks, conversions, frequency, ctr, cpa FROM meta_insights_daily WHERE date >= NOW() - INTERVAL '7 days' ORDER BY date DESC, spend DESC LIMIT 100;"
+        "query": "SELECT entity_level, entity_id, date, spend, impressions, reach, clicks, conversions, frequency, ctr, cpa\nFROM meta_insights_daily\nWHERE date >= NOW() - INTERVAL '7 days'\nORDER BY date DESC, spend DESC\nLIMIT 100;",
+        "options": {}
       },
       "name": "Fetch 7-Day KPI Snapshot",
       "type": "n8n-nodes-base.postgres",
-      "position": [460, 300]
+      "position": [460, 280],
+      "id": "wf03-kpi",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all().map(i => i.json);\nconst freqThreshold = parseFloat($env.FATIGUE_FREQ_THRESHOLD || 3.0);\n\n// Top 5 spenders\nconst topSpend = [...items].sort((a,b) => b.spend - a.spend).slice(0, 5);\n// Bottom 5 by CPA (highest efficiency)\nconst topEfficiency = items.filter(a => a.conversions > 0).sort((a,b) => a.cpa - b.cpa).slice(0, 5);\n// High frequency fatigue\nconst fatigue = items.filter(a => a.frequency > freqThreshold);\n\n// Summary stats\nconst totalSpend = items.filter(i => i.entity_level === 'adset').reduce((s,i) => s + i.spend, 0);\nconst totalConversions = items.filter(i => i.entity_level === 'adset').reduce((s,i) => s + i.conversions, 0);\nconst avgCpa = totalConversions > 0 ? totalSpend / totalConversions : null;\n\nreturn [{\n  json: {\n    summary: { totalSpend, totalConversions, avgCpa },\n    top_spend: topSpend,\n    top_efficiency: topEfficiency,\n    fatigue_candidates: fatigue\n  }\n}];"
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst freqThreshold = parseFloat($env.FATIGUE_FREQ_THRESHOLD || 3.5);\nconst targetCpa = parseFloat($env.TARGET_CPA || 500);\n\n// Top 5 spenders\nconst topSpend = [...items].sort((a, b) => b.spend - a.spend).slice(0, 5);\n\n// Top 5 most efficient (lowest CPA with conversions)\nconst topEfficiency = items\n  .filter(a => a.conversions > 0 && a.cpa)\n  .sort((a, b) => a.cpa - b.cpa)\n  .slice(0, 5);\n\n// Fatigue candidates: high frequency AND CTR below average\nconst avgCtr = items.reduce((s, i) => s + (i.ctr || 0), 0) / (items.length || 1);\nconst fatigue = items.filter(a =>\n  a.frequency > freqThreshold && (a.ctr || 0) < avgCtr\n);\n\n// Underperformers: spend > 0, CPA > target, 3+ days\nconst underperformers = items.filter(a =>\n  a.spend > 0 && a.cpa && a.cpa > targetCpa\n);\n\n// Summary at adset level\nconst adsets = items.filter(i => i.entity_level === 'adset');\nconst totalSpend = adsets.reduce((s, i) => s + parseFloat(i.spend || 0), 0);\nconst totalConversions = adsets.reduce((s, i) => s + parseInt(i.conversions || 0), 0);\nconst avgCpa = totalConversions > 0 ? totalSpend / totalConversions : null;\n\n// Build dynamic RAG query from actual fatigue candidates\nconst fatigueIds = fatigue.map(a => a.entity_id).slice(0, 5).join(', ');\nconst ragQuery = fatigueIds\n  ? `performance data for adsets ${fatigueIds} frequency CTR trend declining`\n  : 'ad sets with declining CTR and rising frequency last 7 days';\n\nreturn [{\n  json: {\n    summary: { totalSpend, totalConversions, avgCpa, targetCpa },\n    top_spend: topSpend,\n    top_efficiency: topEfficiency,\n    fatigue_candidates: fatigue,\n    underperformers,\n    rag_query: ragQuery\n  }\n}];"
       },
       "name": "Aggregate KPIs",
       "type": "n8n-nodes-base.code",
-      "position": [660, 300]
+      "position": [680, 280],
+      "id": "wf03-aggregate",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "http://vector-bridge:8002/query",
+        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             { "name": "X-API-Key", "value": "={{$env.INTERNAL_API_KEY}}" }
           ]
         },
-        "body": {
-          "query": "ad sets with declining CTR and rising frequency last 7 days",
-          "top_k": 8,
-          "where": { "doc_type": { "$in": ["PERFORMANCE_CARD", "BUSINESS_STRATEGY"] } }
-        }
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "query", "value": "={{$json.rag_query}}" },
+            { "name": "top_k", "value": 8 },
+            { "name": "where", "value": "={\"doc_type\":{\"$in\":[\"PERFORMANCE_CARD\",\"BUSINESS_STRATEGY\"]}}" }
+          ]
+        },
+        "options": {}
       },
       "name": "Retrieve Fatigue Context",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [460, 500]
+      "position": [680, 480],
+      "id": "wf03-rag",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "mode": "combine",
-        "combineBy": "position"
+        "combineBy": "combineAll",
+        "options": {}
       },
-      "name": "Merge Context",
+      "name": "Merge KPI + RAG",
       "type": "n8n-nodes-base.merge",
-      "position": [860, 400]
+      "position": [900, 380],
+      "id": "wf03-merge",
+      "typeVersion": 3.2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
-        "body": {
-          "contents": [{
-            "role": "user",
-            "parts": [{
-              "text": "={{\"You are the Strategy Agent for Laiqa, a women's hormonal health brand. Analyse the KPI snapshot and retrieved context. Return ONLY valid JSON matching the schema.\\n\\nKPI SNAPSHOT SUMMARY:\\n\" + JSON.stringify($node[\"Aggregate KPIs\"].item.json) + \"\\n\\nRAG CONTEXT:\\n\" + JSON.stringify($node[\"Retrieve Fatigue Context\"].item.json.results)}}"
-            }]
-          }],
-          "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-              "type": "object",
-              "required": ["summary", "top_issues", "hypotheses", "confidence"],
-              "properties": {
-                "summary": { "type": "string" },
-                "confidence": { "type": "number" },
-                "top_issues": { "type": "array", "items": { "type": "string" } },
-                "hypotheses": { "type": "array", "items": { "type": "object", "properties": { "hypothesis": { "type": "string" }, "evidence": { "type": "string" } } } }
-              }
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"role\":\"user\",\"parts\":[{\"text\":\"You are the Strategy Agent for Laiqa, a women's hormonal health brand (Ayurveda + modern science).\\n\\nAnalyse the KPI snapshot and retrieved context. Cite specific entity IDs. Focus on funnel-stage diagnosis: TOFU/MOFU/BOFU. Never assert personal attributes about viewers.\\n\\nKPI SNAPSHOT:\\n\" + JSON.stringify($node['Aggregate KPIs'].item.json) + \"\\n\\nRAG CONTEXT:\\n\" + JSON.stringify($node['Retrieve Fatigue Context'].item.json.results || [])}]}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\"responseMimeType\":\"application/json\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"summary\",\"top_issues\",\"hypotheses\",\"confidence\"],\"properties\":{\"summary\":{\"type\":\"string\"},\"confidence\":{\"type\":\"number\"},\"top_issues\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"hypotheses\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"hypothesis\":{\"type\":\"string\"},\"evidence\":{\"type\":\"string\"}}}}}}}"
             }
-          }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 }
         }
       },
       "name": "Strategy Agent",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1060, 300]
+      "position": [1120, 280],
+      "id": "wf03-strategy",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
-        "body": {
-          "contents": [{
-            "role": "user",
-            "parts": [{
-              "text": "={{\"You are the Optimisation Agent. TARGET_CPA=\" + $env.TARGET_CPA + \" TARGET_ROAS=\" + $env.TARGET_ROAS + \" MAX_BUDGET_CHANGE_PCT=\" + $env.MAX_DAILY_BUDGET_CHANGE_PCT + \"\\n\\nKPI SNAPSHOT SUMMARY:\\n\" + JSON.stringify($node[\"Aggregate KPIs\"].item.json) + \"\\n\\nReturn ONLY valid JSON matching the schema. Do NOT propose budget changes exceeding the cap.\"}}"
-            }]
-          }],
-          "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-              "type": "object",
-              "required": ["actions", "summary", "confidence"],
-              "properties": {
-                "summary": { "type": "string" },
-                "confidence": { "type": "number" },
-                "actions": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": ["entity_level", "entity_id", "action_type", "rationale", "risk"],
-                    "properties": {
-                      "entity_level": { "type": "string", "enum": ["campaign", "adset", "ad"] },
-                      "entity_id": { "type": "string" },
-                      "action_type": { "type": "string", "enum": ["pause", "scale_budget", "refresh_creative", "reallocate"] },
-                      "rationale": { "type": "string" },
-                      "risk": { "type": "string", "enum": ["low", "medium", "high"] }
-                    }
-                  }
-                }
-              }
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"role\":\"user\",\"parts\":[{\"text\":\"You are the Optimisation Agent for Laiqa's Meta Ads account.\\n\\nHARD CONSTRAINTS:\\n- Budget changes must not exceed \" + $env.MAX_DAILY_BUDGET_CHANGE_PCT + \"%\\n- Scale actions require \" + $env.MIN_CONVERSIONS_FOR_SCALE + \" conversions minimum\\n- Pause candidates must have spend above threshold AND outcomes below floor for 3+ days\\n- TARGET_CPA=\" + $env.TARGET_CPA + \" TARGET_ROAS=\" + $env.TARGET_ROAS + \"\\n\\nFATIGUE SIGNAL: frequency > \" + $env.FATIGUE_FREQ_THRESHOLD + \" AND CTR declining = creative refresh required\\n\\nKPI SNAPSHOT:\\n\" + JSON.stringify($node['Aggregate KPIs'].item.json) + \"\\n\\nReturn ONLY valid JSON. Include rationale and risk for every action.\"}]}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\"responseMimeType\":\"application/json\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"actions\",\"summary\",\"confidence\"],\"properties\":{\"summary\":{\"type\":\"string\"},\"confidence\":{\"type\":\"number\"},\"actions\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"required\":[\"entity_level\",\"entity_id\",\"action_type\",\"rationale\",\"risk\",\"conversions_7d\",\"spend_7d\"],\"properties\":{\"entity_level\":{\"type\":\"string\",\"enum\":[\"campaign\",\"adset\",\"ad\"]},\"entity_id\":{\"type\":\"string\"},\"entity_name\":{\"type\":\"string\"},\"action_type\":{\"type\":\"string\",\"enum\":[\"pause\",\"scale_budget\",\"refresh_creative\",\"reallocate\"]},\"rationale\":{\"type\":\"string\"},\"risk\":{\"type\":\"string\",\"enum\":[\"low\",\"medium\",\"high\"]},\"conversions_7d\":{\"type\":\"number\"},\"spend_7d\":{\"type\":\"number\"},\"delta\":{\"type\":\"object\",\"properties\":{\"budget_change_pct\":{\"type\":\"number\"}}}}}}}}}"
             }
-          }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 }
         }
       },
       "name": "Optimisation Agent",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1060, 500]
+      "position": [1120, 480],
+      "id": "wf03-optimisation",
+      "typeVersion": 4.4
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safely parse Gemini response — handles both string and pre-parsed object\nconst parse = (val) => {\n  if (typeof val === 'string') {\n    try { return JSON.parse(val); } catch(e) { return { error: 'parse_failed', raw: val }; }\n  }\n  return val;\n};\n\nconst strategyRaw = $('Strategy Agent').item.json;\nconst strategyText = strategyRaw?.candidates?.[0]?.content?.parts?.[0]?.text;\nconst strategyData = parse(strategyText);\n\nconst optimisationRaw = $('Optimisation Agent').item.json;\nconst optimisationText = optimisationRaw?.candidates?.[0]?.content?.parts?.[0]?.text;\nconst optimisationData = parse(optimisationText);\n\nreturn [{ json: { strategyData, optimisationData } }];"
+      },
+      "name": "Parse Agent Outputs",
+      "type": "n8n-nodes-base.code",
+      "position": [1340, 380],
+      "id": "wf03-parse",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
-        "body": {
-          "contents": [{
-            "role": "user",
-            "parts": [{
-              "text": "={{\"You are the Copywriting Agent for Laiqa. Generate 3 compliant Meta ad copy variants based on these strategic hypotheses:\\n\" + JSON.stringify($node[\"Strategy Agent\"].item.json.candidates[0].content.parts[0].text) + \"\\n\\nReturn ONLY valid JSON matching the schema.\"}}"
-            }]
-          }],
-          "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-              "type": "object",
-              "required": ["variants"],
-              "properties": {
-                "variants": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "required": ["hook", "body", "cta", "funnel_stage"],
-                    "properties": {
-                      "hook": { "type": "string" },
-                      "body": { "type": "string" },
-                      "cta": { "type": "string" },
-                      "funnel_stage": { "type": "string" }
-                    }
-                  }
-                }
-              }
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"role\":\"user\",\"parts\":[{\"text\":\"You are the Copywriting Agent for Laiqa. Generate 3 compliant Meta ad copy variants.\\n\\nBRAND VOICE: Warm, empowering, science-backed but accessible. Ayurveda + modern science. Never medical advice.\\n\\nSTRICTLY FORBIDDEN:\\n1. No personal attribute assertions: 'Do you have PCOS?', 'Struggling with hormones?'\\n2. No fear-based framing: 'Your hormones are crashing'\\n3. No implied diagnosis\\n4. No body shame\\n\\nFocus on benefits: 'Support your hormonal balance', 'Discover your Prakriti', 'Wellness for every phase'.\\n\\nSTRATEGIC HYPOTHESES:\\n\" + JSON.stringify($json.strategyData?.hypotheses || []) + \"\\n\\nReturn ONLY valid JSON.\"}]}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\"responseMimeType\":\"application/json\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"variants\"],\"properties\":{\"variants\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"required\":[\"hook\",\"body\",\"cta\",\"funnel_stage\"],\"properties\":{\"hook\":{\"type\":\"string\"},\"body\":{\"type\":\"string\"},\"cta\":{\"type\":\"string\"},\"funnel_stage\":{\"type\":\"string\"}}}}}}}"
             }
-          }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 }
         }
       },
       "name": "Copywriting Agent",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1000, 300]
+      "position": [1560, 280],
+      "id": "wf03-copy",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "queryParameters": { "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }] },
-        "body": {
-          "contents": [{
-            "role": "user",
-            "parts": [{
-              "text": "={{\"You are the Compliance Agent for Laiqa. Review the proposed ad copy variants for Meta policy violations.\\n\\nPROPOSED COPY:\\n\" + JSON.stringify($node[\"Copywriting Agent\"].item.json.candidates[0].content.parts[0].text)}}"
-            }]
-          }],
-          "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-              "type": "object",
-              "required": ["verdicts", "overall_status"],
-              "properties": {
-                "overall_status": { "type": "string", "enum": ["PASS", "FAIL", "NEEDS_REVISION"] },
-                "verdicts": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "status": { "type": "string", "enum": ["PASS", "FAIL"] },
-                      "violations": { "type": "array", "items": { "type": "string" } },
-                      "suggested_rewrite": { "type": "string" }
-                    }
-                  }
-                }
-              }
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [{ "name": "key", "value": "={{$env.GEMINI_API_KEY}}" }]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"role\":\"user\",\"parts\":[{\"text\":\"You are the Compliance Agent for Laiqa, a women's health brand on Meta.\\n\\nHARD-FAIL triggers (auto-reject):\\n1. Personal attribute assertions: 'Do you have PCOS?', 'Are you pregnant?', 'Struggling with hormones?'\\n2. Negative self-perception: body shame, fear-based health framing\\n3. Unsubstantiated medical claims without 'not medical advice' qualifier\\n4. Second-person medical diagnosis framing\\n\\nPASS criteria: benefit-led language, Ayurvedic/wellness framing, inclusive empowering tone.\\n\\nFor each FAIL, provide a suggested rewrite that passes.\\n\\nPROPOSED COPY:\\n\" + JSON.stringify($('Copywriting Agent').item.json?.candidates?.[0]?.content?.parts?.[0]?.text || '') + \"\\n\\nReturn ONLY valid JSON.\"}]}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\"responseMimeType\":\"application/json\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"verdicts\",\"overall_status\"],\"properties\":{\"overall_status\":{\"type\":\"string\",\"enum\":[\"PASS\",\"FAIL\",\"NEEDS_REVISION\"]},\"verdicts\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\",\"enum\":[\"PASS\",\"FAIL\"]},\"violations\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"suggested_rewrite\":{\"type\":\"string\"}}}}}}}"
             }
-          }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 }
         }
       },
       "name": "Compliance Agent",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1200, 300]
+      "position": [1780, 280],
+      "id": "wf03-compliance",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
-        "jsCode": "const strategy = $('Strategy Agent').item.json.candidates[0].content.parts[0].text;\nconst optimisation = $('Optimisation Agent').item.json.candidates[0].content.parts[0].text;\nconst compliance = $('Compliance Agent').item.json.candidates[0].content.parts[0].text;\n\n// Handle potential double parsing if n8n already parsed it\nconst parse = (val) => typeof val === 'string' ? JSON.parse(val) : val;\n\nconst strategyData = parse(strategy);\nconst optimisationData = parse(optimisation);\nconst complianceData = parse(compliance);\n\nconst report = {\n  date: new Date().toISOString().split('T')[0],\n  account_id: $env.META_AD_ACCOUNT_ID,\n  strategy: strategyData,\n  optimisation: optimisationData,\n  compliance: complianceData,\n  generated_at: new Date().toISOString()\n};\n\nconst slackText = [\n  `*📊 Laiqa Daily Growth Report - ${report.date}*`,\n  `*Strategy Summary:* ${strategyData.summary}`,\n  `*Top Issues:* ${(strategyData.top_issues || []).join(', ')}`,\n  `*Proposed Actions:* ${optimisationData.actions?.length || 0} actions queued`,\n  `*Compliance:* ${complianceData.overall_status}`,\n  `*Confidence:* ${Math.round((strategyData.confidence || 0) * 100)}%`\n].join('\\n');\n\nreturn [{ json: { report, slackText } }];"
+        "jsCode": "const parse = (val) => {\n  if (typeof val === 'string') {\n    try { return JSON.parse(val); } catch(e) { return { error: 'parse_failed', raw: val }; }\n  }\n  return val;\n};\n\nconst strategyData = $json.strategyData;\nconst optimisationData = $json.optimisationData;\n\nconst copyRaw = $('Copywriting Agent').item.json?.candidates?.[0]?.content?.parts?.[0]?.text;\nconst copyData = parse(copyRaw);\n\nconst complianceRaw = $('Compliance Agent').item.json?.candidates?.[0]?.content?.parts?.[0]?.text;\nconst complianceData = parse(complianceRaw);\n\nconst date = new Date().toISOString().split('T')[0];\n\nconst report = {\n  date,\n  account_id: $env.META_AD_ACCOUNT_ID,\n  strategy: strategyData,\n  optimisation: optimisationData,\n  copy_variants: copyData,\n  compliance: complianceData,\n  generated_at: new Date().toISOString()\n};\n\nconst actionCount = optimisationData?.actions?.length || 0;\nconst confidence = Math.round((strategyData?.confidence || 0) * 100);\nconst topIssues = (strategyData?.top_issues || []).slice(0, 3).join(', ');\n\nconst slackText = [\n  `*📊 Laiqa Daily Growth Report — ${date}*`,\n  `*Strategy:* ${strategyData?.summary || 'N/A'}`,\n  `*Top Issues:* ${topIssues || 'None'}`,\n  `*Proposed Actions:* ${actionCount} queued`,\n  `*Compliance:* ${complianceData?.overall_status || 'N/A'}`,\n  `*Confidence:* ${confidence}%`\n].join('\\n');\n\nreturn [{ json: { report, slackText, actions: optimisationData?.actions || [], compliance_verdict: complianceData?.overall_status || 'FAIL' } }];"
       },
       "name": "Assemble Report Bundle",
       "type": "n8n-nodes-base.code",
-      "position": [1400, 500]
+      "position": [2000, 380],
+      "id": "wf03-assemble",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": { "text": "={{$json.slackText}}" }
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "text", "value": "={{$json.slackText}}" }
+          ]
+        },
+        "options": {}
       },
       "name": "Send to Slack",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1600, 500]
+      "position": [2220, 280],
+      "id": "wf03-slack",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO agent_runs (run_id, agent_name, task_type, outputs_json, schema_valid, status, token_estimate, completed_at) VALUES (gen_random_uuid()::text, $1, $2, $3::jsonb, $4, $5, $6, NOW());",
-        "queryParameters": "DAILY_AUDIT_BUNDLE,DAILY_AUDIT,={{JSON.stringify($json.report)}},true,COMPLETED,={{Math.round(JSON.stringify($json.report).length / 4)}}"
+        "query": "INSERT INTO agent_runs (run_id, agent_name, task_type, outputs_json, schema_valid, status, token_estimate, completed_at)\nVALUES (gen_random_uuid()::text, $1, $2, $3::jsonb, $4, $5, $6, NOW());",
+        "additionalFields": {
+          "queryParams": "=['DAILY_AUDIT_BUNDLE', 'DAILY_AUDIT', JSON.stringify($json.report), true, 'COMPLETED', Math.round(JSON.stringify($json.report).length / 4)]"
+        },
+        "options": {}
       },
       "name": "Log Agent Run",
       "type": "n8n-nodes-base.postgres",
-      "position": [1600, 700]
+      "position": [2220, 480],
+      "id": "wf03-log",
+      "typeVersion": 2.6
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/action-proposal",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "actions", "value": "={{$json.actions}}" },
+            { "name": "compliance_verdict", "value": "={{$json.compliance_verdict}}" },
+            { "name": "summary", "value": "={{$json.report.strategy.summary}}" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Trigger Action Proposal",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2220, 680],
+      "id": "wf03-chain",
+      "typeVersion": 4.4
     }
   ],
   "connections": {
-    "Webhook Trigger": { "main": [[{ "node": "Fetch 7-Day KPI Snapshot" }, { "node": "Retrieve Fatigue Context" }]] },
-    "Fetch 7-Day KPI Snapshot": { "main": [[{ "node": "Aggregate KPIs" }]] },
-    "Aggregate KPIs": { "main": [[{ "node": "Merge Context" }, { "node": "Optimisation Agent" }]] },
-    "Retrieve Fatigue Context": { "main": [[{ "node": "Merge Context" }]] },
-    "Merge Context": { "main": [[{ "node": "Strategy Agent" }]] },
-    "Strategy Agent": { "main": [[{ "node": "Copywriting Agent" }]] },
-    "Copywriting Agent": { "main": [[{ "node": "Compliance Agent" }]] },
-    "Optimisation Agent": { "main": [[{ "node": "Assemble Report Bundle" }]] },
-    "Compliance Agent": { "main": [[{ "node": "Assemble Report Bundle" }]] },
-    "Assemble Report Bundle": { "main": [[{ "node": "Send to Slack" }, { "node": "Log Agent Run" }]] }
+    "Webhook Trigger": {
+      "main": [[
+        { "node": "Fetch 7-Day KPI Snapshot", "type": "main", "index": 0 }
+      ]]
+    },
+    "Fetch 7-Day KPI Snapshot": {
+      "main": [[{ "node": "Aggregate KPIs", "type": "main", "index": 0 }]]
+    },
+    "Aggregate KPIs": {
+      "main": [[
+        { "node": "Merge KPI + RAG", "type": "main", "index": 0 },
+        { "node": "Retrieve Fatigue Context", "type": "main", "index": 0 },
+        { "node": "Optimisation Agent", "type": "main", "index": 0 }
+      ]]
+    },
+    "Retrieve Fatigue Context": {
+      "main": [[{ "node": "Merge KPI + RAG", "type": "main", "index": 1 }]]
+    },
+    "Merge KPI + RAG": {
+      "main": [[{ "node": "Strategy Agent", "type": "main", "index": 0 }]]
+    },
+    "Strategy Agent": {
+      "main": [[{ "node": "Parse Agent Outputs", "type": "main", "index": 0 }]]
+    },
+    "Optimisation Agent": {
+      "main": [[{ "node": "Parse Agent Outputs", "type": "main", "index": 0 }]]
+    },
+    "Parse Agent Outputs": {
+      "main": [[{ "node": "Copywriting Agent", "type": "main", "index": 0 }]]
+    },
+    "Copywriting Agent": {
+      "main": [[{ "node": "Compliance Agent", "type": "main", "index": 0 }]]
+    },
+    "Compliance Agent": {
+      "main": [[{ "node": "Assemble Report Bundle", "type": "main", "index": 0 }]]
+    },
+    "Assemble Report Bundle": {
+      "main": [[
+        { "node": "Send to Slack", "type": "main", "index": 0 },
+        { "node": "Log Agent Run", "type": "main", "index": 0 },
+        { "node": "Trigger Action Proposal", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
   }
 }

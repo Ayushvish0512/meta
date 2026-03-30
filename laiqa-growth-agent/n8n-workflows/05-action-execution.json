@@ -2,112 +2,248 @@
   "name": "05 - Action Execution (Meta Writes + Rollback)",
   "nodes": [
     {
-      "parameters": {},
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "action-approved",
+        "responseMode": "onReceived",
+        "options": {}
+      },
       "name": "Approval Webhook",
       "type": "n8n-nodes-base.webhook",
       "webhookId": "action-approved",
-      "position": [240, 400]
+      "position": [240, 400],
+      "id": "wf05-trigger",
+      "typeVersion": 1.1
     },
     {
       "parameters": {
-        "jsCode": "// Global Kill Switch check\nif ($env.KILL_SWITCH === 'true') {\n  throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n}\n\n// Parse Slack interactive payload\nconst payload = JSON.parse($json.body.payload);\nconst [plan_id, decision] = payload.actions[0].value.split('|');\nreturn [{ json: { plan_id, decision, user: payload.user.name } }];"
+        "jsCode": "// Global Kill Switch check\nif ($env.KILL_SWITCH === 'true') {\n  throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n}\n\n// Parse Slack interactive payload\nlet payload;\ntry {\n  payload = typeof $json.body?.payload === 'string'\n    ? JSON.parse($json.body.payload)\n    : $json.body?.payload || $json;\n} catch(e) {\n  throw new Error('Failed to parse Slack payload: ' + e.message);\n}\n\nconst actionValue = payload?.actions?.[0]?.value || '';\nconst [plan_id, decision] = actionValue.split('|');\nconst user = payload?.user?.name || payload?.user?.username || 'unknown';\n\nif (!plan_id || !decision) {\n  throw new Error('Invalid payload: missing plan_id or decision. Got: ' + actionValue);\n}\n\nreturn [{ json: { plan_id, decision, user } }];"
       },
       "name": "Parse Slack Payload",
       "type": "n8n-nodes-base.code",
-      "position": [460, 400]
+      "position": [460, 400],
+      "id": "wf05-parse",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "conditions": {
-          "string": [{ "value1": "={{$json.decision}}", "operation": "equals", "value2": "APPROVED" }]
+          "string": [
+            {
+              "value1": "={{$json.decision}}",
+              "operation": "equals",
+              "value2": "APPROVED"
+            }
+          ]
         }
       },
       "name": "Check Approved",
       "type": "n8n-nodes-base.if",
-      "position": [700, 400]
+      "position": [700, 400],
+      "id": "wf05-check",
+      "typeVersion": 1
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM action_plans WHERE plan_id = $1 AND status = 'PENDING_APPROVAL';",
-        "queryParameters": "={{$json.plan_id}}"
+        "query": "SELECT ap.*, \n  COALESCE(\n    (SELECT json_agg(json_build_object('entity_id', mid.entity_id, 'conversions_7d', SUM(mid.conversions), 'spend_7d', SUM(mid.spend)))\n     FROM meta_insights_daily mid\n     WHERE mid.date >= NOW() - INTERVAL '7 days'\n     GROUP BY mid.entity_id),\n    '[]'::json\n  ) AS recent_performance\nFROM action_plans ap\nWHERE ap.plan_id = $1 AND ap.status = 'PENDING_APPROVAL';",
+        "additionalFields": {
+          "queryParams": "=[$json.plan_id]"
+        },
+        "options": {}
       },
-      "name": "Load Plan",
+      "name": "Load Plan + Performance",
       "type": "n8n-nodes-base.postgres",
-      "position": [940, 300]
+      "position": [940, 280],
+      "id": "wf05-load",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO approvals (plan_id, approver, decision) VALUES ($1, $2, $3);",
-        "queryParameters": "={{$node[\"Parse Slack Payload\"].json.plan_id}},{{$node[\"Parse Slack Payload\"].json.user}},{{$node[\"Parse Slack Payload\"].json.decision}}"
+        "additionalFields": {
+          "queryParams": "=[$('Parse Slack Payload').item.json.plan_id, $('Parse Slack Payload').item.json.user, $('Parse Slack Payload').item.json.decision]"
+        },
+        "options": {}
       },
       "name": "Record Approval",
       "type": "n8n-nodes-base.postgres",
-      "position": [1180, 300]
+      "position": [1160, 280],
+      "id": "wf05-record",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
-        "jsCode": "// Hard safety rules before any Meta write\nconst plan = $node[\"Load Plan\"].item.json;\nconst actions = plan.actions || [];\nconst maxBudgetChangePct = parseFloat($env.MAX_DAILY_BUDGET_CHANGE_PCT || 20);\nconst minConversions = parseInt($env.MIN_CONVERSIONS_FOR_SCALE || 10);\n\nconst safeActions = actions.filter(action => {\n  // Block scale if insufficient conversions\n  if (action.action_type === 'scale_budget') {\n    // Note: in a real system we should re-verify conversions from DB here\n    if ((action.conversions || 0) < minConversions) {\n      console.log(`BLOCKED scale on ${action.entity_id}: insufficient conversions`);\n      return false;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs((action.delta?.budget_change_pct || 0));\n    if (changePct > maxBudgetChangePct) {\n      console.log(`BLOCKED scale on ${action.entity_id}: budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%`);\n      return false;\n    }\n  }\n  return true;\n});\n\nreturn safeActions.map(a => ({ json: { ...a, plan_id: plan.plan_id } }));"
+        "jsCode": "// Hard safety rules before any Meta write\n// Uses real conversions_7d from Postgres join — not agent-estimated values\nconst plan = $('Load Plan + Performance').item.json;\nconst actions = plan.actions || [];\nconst recentPerf = plan.recent_performance || [];\n\nconst maxBudgetChangePct = parseFloat($env.MAX_DAILY_BUDGET_CHANGE_PCT || 20);\nconst minConversions = parseInt($env.MIN_CONVERSIONS_FOR_SCALE || 10);\n\n// Build a lookup: entity_id → real conversions from DB\nconst perfMap = {};\nfor (const p of recentPerf) {\n  perfMap[p.entity_id] = { conversions_7d: p.conversions_7d || 0, spend_7d: p.spend_7d || 0 };\n}\n\nconst safeActions = [];\nconst blockedActions = [];\n\nfor (const action of actions) {\n  const perf = perfMap[action.entity_id] || { conversions_7d: 0, spend_7d: 0 };\n\n  if (action.action_type === 'scale_budget') {\n    // Block if insufficient real conversions from DB\n    if (perf.conversions_7d < minConversions) {\n      blockedActions.push({ ...action, block_reason: `Insufficient conversions: ${perf.conversions_7d} < ${minConversions}` });\n      continue;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs(action.delta?.budget_change_pct || 0);\n    if (changePct > maxBudgetChangePct) {\n      blockedActions.push({ ...action, block_reason: `Budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%` });\n      continue;\n    }\n  }\n\n  safeActions.push({ ...action, plan_id: plan.plan_id, perf });\n}\n\nif (safeActions.length === 0) {\n  throw new Error(`All ${actions.length} actions blocked by hard rules. Blocked: ${JSON.stringify(blockedActions)}`);\n}\n\nconsole.log(`Safe: ${safeActions.length}, Blocked: ${blockedActions.length}`);\nreturn safeActions.map(a => ({ json: a }));"
       },
       "name": "Enforce Hard Rules",
       "type": "n8n-nodes-base.code",
-      "position": [1420, 300]
+      "position": [1380, 280],
+      "id": "wf05-rules",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$json.entity_id}}",
-        "queryParameters": { "parameters": [{ "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" }] },
-        "body": "={{$json.action_type === 'pause' ? '{\"status\":\"PAUSED\"}' : JSON.stringify($json.delta || {})}}"
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "={{$json.action_type === 'pause' ? 'PAUSED' : undefined}}"
+            },
+            {
+              "name": "daily_budget",
+              "value": "={{$json.action_type === 'scale_budget' ? $json.delta?.new_daily_budget : undefined}}"
+            }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 2, "waitBetweenTries": 3000 }
+        }
       },
       "name": "Execute Meta API Call",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1660, 300]
+      "position": [1600, 280],
+      "id": "wf05-meta",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO actions_executed (plan_id, entity_level, entity_id, action_type, meta_api_call, meta_api_response, status, executed_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'EXECUTED', NOW());",
-        "queryParameters": "={{$json.plan_id}},{{$json.entity_level}},{{$json.entity_id}},{{$json.action_type}},={{JSON.stringify($json)}},={{JSON.stringify($node[\"Execute Meta API Call\"].json)}}"
+        "query": "INSERT INTO actions_executed (plan_id, entity_level, entity_id, action_type, meta_api_call, meta_api_response, status, executed_at)\nVALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'EXECUTED', NOW());",
+        "additionalFields": {
+          "queryParams": "=[$json.plan_id, $json.entity_level, $json.entity_id, $json.action_type, JSON.stringify($json), JSON.stringify($('Execute Meta API Call').item.json)]"
+        },
+        "options": {}
       },
       "name": "Log Execution",
       "type": "n8n-nodes-base.postgres",
-      "position": [1900, 300]
+      "position": [1820, 280],
+      "id": "wf05-log",
+      "typeVersion": 2.6
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE action_plans SET status = 'EXECUTED' WHERE plan_id = $1;",
+        "additionalFields": {
+          "queryParams": "=[$json.plan_id]"
+        },
+        "options": {}
+      },
+      "name": "Mark Plan Executed",
+      "type": "n8n-nodes-base.postgres",
+      "position": [2040, 280],
+      "id": "wf05-markexec",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": { "text": "✅ Action executed: {{$json.action_type}} on {{$json.entity_id}}\nPlan: {{$json.plan_id}}\n\nTo rollback, re-enable the entity manually in Ads Manager or trigger the rollback workflow." }
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=✅ *Action Executed*\\n• Type: `{{$json.action_type}}`\\n• Entity: `{{$json.entity_name || $json.entity_id}}` ({{$json.entity_level}})\\n• Plan: `{{$json.plan_id}}`\\n• Approved by: {{$('Parse Slack Payload').item.json.user}}\\n\\n_To rollback: go to Meta Ads Manager and manually re-enable the entity, or set status back to ACTIVE via the API._"
+            }
+          ]
+        },
+        "options": {}
       },
       "name": "Confirm + Rollback Instructions",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1900, 500]
+      "position": [2040, 480],
+      "id": "wf05-confirm",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE action_plans SET status = $1 WHERE plan_id = $2;",
-        "queryParameters": "REJECTED,={{$json.plan_id}}"
+        "query": "UPDATE action_plans SET status = 'REJECTED' WHERE plan_id = $1;",
+        "additionalFields": {
+          "queryParams": "=[$json.plan_id]"
+        },
+        "options": {}
       },
       "name": "Mark Rejected",
       "type": "n8n-nodes-base.postgres",
-      "position": [940, 500]
+      "position": [940, 520],
+      "id": "wf05-reject",
+      "typeVersion": 2.6
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=❌ Plan `{{$('Parse Slack Payload').item.json.plan_id}}` rejected by {{$('Parse Slack Payload').item.json.user}}. No changes made to Meta."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Notify Rejection",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1160, 520],
+      "id": "wf05-notifyreject",
+      "typeVersion": 4.4
     }
   ],
   "connections": {
-    "Approval Webhook": { "main": [[{ "node": "Parse Slack Payload" }]] },
-    "Parse Slack Payload": { "main": [[{ "node": "Check Approved" }]] },
+    "Approval Webhook": {
+      "main": [[{ "node": "Parse Slack Payload", "type": "main", "index": 0 }]]
+    },
+    "Parse Slack Payload": {
+      "main": [[{ "node": "Check Approved", "type": "main", "index": 0 }]]
+    },
     "Check Approved": {
       "main": [
-        [{ "node": "Load Plan" }],
-        [{ "node": "Mark Rejected" }]
+        [{ "node": "Load Plan + Performance", "type": "main", "index": 0 }],
+        [{ "node": "Mark Rejected", "type": "main", "index": 0 }]
       ]
     },
-    "Load Plan": { "main": [[{ "node": "Record Approval" }]] },
-    "Record Approval": { "main": [[{ "node": "Enforce Hard Rules" }]] },
-    "Enforce Hard Rules": { "main": [[{ "node": "Execute Meta API Call" }]] },
-    "Execute Meta API Call": { "main": [[{ "node": "Log Execution" }, { "node": "Confirm + Rollback Instructions" }]] }
+    "Load Plan + Performance": {
+      "main": [[{ "node": "Record Approval", "type": "main", "index": 0 }]]
+    },
+    "Record Approval": {
+      "main": [[{ "node": "Enforce Hard Rules", "type": "main", "index": 0 }]]
+    },
+    "Enforce Hard Rules": {
+      "main": [[{ "node": "Execute Meta API Call", "type": "main", "index": 0 }]]
+    },
+    "Execute Meta API Call": {
+      "main": [[
+        { "node": "Log Execution", "type": "main", "index": 0 }
+      ]]
+    },
+    "Log Execution": {
+      "main": [[
+        { "node": "Mark Plan Executed", "type": "main", "index": 0 },
+        { "node": "Confirm + Rollback Instructions", "type": "main", "index": 0 }
+      ]]
+    },
+    "Mark Rejected": {
+      "main": [[{ "node": "Notify Rejection", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
   }
 }

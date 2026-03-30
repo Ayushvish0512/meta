@@ -2,67 +2,101 @@
   "name": "02 - Embedding Refresh",
   "nodes": [
     {
-      "parameters": {},
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "embedding-refresh",
+        "responseMode": "onReceived",
+        "options": {}
+      },
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "webhookId": "embedding-refresh",
-      "position": [240, 300]
+      "position": [240, 300],
+      "id": "wf02-trigger",
+      "typeVersion": 1.1
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT 'PERFORMANCE_CARD' as doc_type, entity_id || '_' || date::text as doc_id,\n  'DOC_TYPE=PERFORMANCE_CARD\\nDATE=' || date || '\\nLEVEL=' || entity_level || '\\nID=' || entity_id ||\n  '\\nSPEND=' || spend || '\\nIMPRESSIONS=' || impressions || '\\nCLICKS=' || clicks ||\n  '\\nCONVERSIONS=' || conversions || '\\nFREQUENCY=' || ROUND(frequency,2) ||\n  '\\nCTR=' || ROUND(ctr*100,3) || '%\\nCPA=' || COALESCE(cpa::text,'N/A') as text_content,\n  json_build_object('doc_type','PERFORMANCE_CARD','entity_level',entity_level,'entity_id',entity_id,'date',date::text,'funnel_stage','PERFORMANCE') as metadata\nFROM meta_insights_daily\nWHERE date >= NOW() - INTERVAL '30 days'\n  AND entity_level IN ('adset','ad')\nORDER BY date DESC\nLIMIT 500;"
+        "query": "SELECT\n  'PERFORMANCE_CARD' AS doc_type,\n  entity_id || '_' || date::text AS doc_id,\n  'DOC_TYPE=PERFORMANCE_CARD' ||\n  '\\nDATE=' || date ||\n  '\\nLEVEL=' || entity_level ||\n  '\\nID=' || entity_id ||\n  '\\nSPEND=' || spend ||\n  '\\nIMPRESSIONS=' || impressions ||\n  '\\nCLICKS=' || clicks ||\n  '\\nCONVERSIONS=' || conversions ||\n  '\\nFREQUENCY=' || ROUND(frequency, 2) ||\n  '\\nCTR=' || ROUND(ctr * 100, 3) || '%' ||\n  '\\nCPA=' || COALESCE(cpa::text, 'N/A') AS text_content,\n  json_build_object(\n    'doc_type', 'PERFORMANCE_CARD',\n    'entity_level', entity_level,\n    'entity_id', entity_id,\n    'date', date::text,\n    'funnel_stage', 'PERFORMANCE'\n  ) AS metadata\nFROM meta_insights_daily\nWHERE date >= NOW() - INTERVAL '30 days'\n  AND entity_level IN ('adset', 'ad')\n  AND impressions > 0\nORDER BY date DESC\nLIMIT 500;",
+        "options": {}
       },
       "name": "Fetch Performance Cards",
       "type": "n8n-nodes-base.postgres",
-      "position": [460, 300]
+      "position": [460, 300],
+      "id": "wf02-fetch",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
         "method": "POST",
         "url": "http://sanitiser:8001/sanitise",
+        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-API-Key", "value": "={{$env.INTERNAL_API_KEY}}" }
+            { "name": "X-API-Key", "value": "={{$env.INTERNAL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
           ]
         },
-        "body": {
-          "text": "={{$json.text_content}}"
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "text", "value": "={{$json.text_content}}" }
+          ]
+        },
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 }
         }
       },
       "name": "Call Sanitiser",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [700, 300]
+      "position": [700, 300],
+      "id": "wf02-sanitise",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "method": "POST",
         "url": "http://vector-bridge:8002/upsert",
+        "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-API-Key", "value": "={{$env.INTERNAL_API_KEY}}" }
+            { "name": "X-API-Key", "value": "={{$env.INTERNAL_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
           ]
         },
-        "body": {
-          "doc_id": "={{$node[\"Fetch Performance Cards\"].json[\"doc_id\"]}}",
-          "text": "={{$json.sanitised}}",
-          "metadata": "={{$node[\"Fetch Performance Cards\"].json[\"metadata\"]}}"
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "doc_id", "value": "={{$('Fetch Performance Cards').item.json.doc_id}}" },
+            { "name": "text", "value": "={{$json.sanitised}}" },
+            { "name": "metadata", "value": "={{$('Fetch Performance Cards').item.json.metadata}}" }
+          ]
         },
-        "options": { "retry": { "enabled": true, "maxTries": 3 } }
+        "options": {
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 }
+        }
       },
       "name": "Upsert to Chroma",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [940, 300]
+      "position": [940, 300],
+      "id": "wf02-upsert",
+      "typeVersion": 4.4
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "INSERT INTO embedding_job_runs (doc_type, doc_count, status) VALUES ($1, $2, $3);",
-        "queryParameters": "PERFORMANCE_CARD,{{$input.all().length}},SUCCESS"
+        "additionalFields": {
+          "queryParams": "=['PERFORMANCE_CARD', $('Fetch Performance Cards').all().length, 'SUCCESS']"
+        },
+        "options": {}
       },
       "name": "Log Job Run",
       "type": "n8n-nodes-base.postgres",
-      "position": [1180, 300]
+      "position": [1180, 300],
+      "id": "wf02-log",
+      "typeVersion": 2.6
     },
     {
       "parameters": {
@@ -72,14 +106,31 @@
       },
       "name": "Trigger Daily Audit",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1420, 300]
+      "position": [1420, 300],
+      "id": "wf02-chain",
+      "typeVersion": 4.4
     }
   ],
   "connections": {
-    "Webhook Trigger": { "main": [[{ "node": "Fetch Performance Cards" }]] },
-    "Fetch Performance Cards": { "main": [[{ "node": "Call Sanitiser" }]] },
-    "Call Sanitiser": { "main": [[{ "node": "Upsert to Chroma" }]] },
-    "Upsert to Chroma": { "main": [[{ "node": "Log Job Run" }]] },
-    "Log Job Run": { "main": [[{ "node": "Trigger Daily Audit" }]] }
+    "Webhook Trigger": {
+      "main": [[{ "node": "Fetch Performance Cards", "type": "main", "index": 0 }]]
+    },
+    "Fetch Performance Cards": {
+      "main": [[{ "node": "Call Sanitiser", "type": "main", "index": 0 }]]
+    },
+    "Call Sanitiser": {
+      "main": [[{ "node": "Upsert to Chroma", "type": "main", "index": 0 }]]
+    },
+    "Upsert to Chroma": {
+      "main": [[{ "node": "Log Job Run", "type": "main", "index": 0 }]]
+    },
+    "Log Job Run": {
+      "main": [[{ "node": "Trigger Daily Audit", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
   }
 }

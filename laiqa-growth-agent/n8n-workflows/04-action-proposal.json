@@ -2,84 +2,138 @@
   "name": "04 - Action Proposal Queue (Human-in-Loop)",
   "nodes": [
     {
-      "parameters": {},
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "action-proposal",
+        "responseMode": "onReceived",
+        "options": {}
+      },
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "webhookId": "action-proposal",
-      "position": [240, 400]
+      "position": [240, 400],
+      "id": "wf04-trigger",
+      "typeVersion": 1.1
     },
     {
       "parameters": {
-        "jsCode": "const plan_id = 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);\nreturn [{ json: { ...$json, plan_id } }];"
+        "jsCode": "// Generate a unique plan ID and validate incoming payload\nconst plan_id = 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);\nconst actions = $json.actions || [];\nconst compliance_verdict = $json.compliance_verdict || 'FAIL';\nconst summary = $json.summary || 'No summary provided';\n\nif (actions.length === 0) {\n  throw new Error('No actions received from WF03. Nothing to propose.');\n}\n\nreturn [{ json: { plan_id, actions, compliance_verdict, summary } }];"
       },
       "name": "Generate Plan ID",
       "type": "n8n-nodes-base.code",
-      "position": [460, 400]
+      "position": [460, 400],
+      "id": "wf04-planid",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "conditions": {
-          "string": [{ "value1": "={{$json.compliance_verdict}}", "operation": "equals", "value2": "PASS" }]
-        }
-      },
-      "name": "Compliance Gate",
-      "type": "n8n-nodes-base.if",
-      "position": [700, 400]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status) VALUES ($1, NOW()::date, $2, $3::jsonb, $4, $5) RETURNING plan_id;",
-        "queryParameters": "={{$json.plan_id}},{{$env.META_AD_ACCOUNT_ID}},={{JSON.stringify($json.actions)}},PASS,PENDING_APPROVAL"
-      },
-      "name": "Save Action Plan",
-      "type": "n8n-nodes-base.postgres",
-      "position": [940, 300]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": {
-          "blocks": [
+          "string": [
             {
-              "type": "section",
-              "text": { "type": "mrkdwn", "text": "🤖 *New Action Plan Ready for Approval*\nPlan ID: `{{$json.plan_id}}`\n\n{{$json.summary}}" }
-            },
-            {
-              "type": "actions",
-              "elements": [
-                { "type": "button", "text": { "type": "plain_text", "text": "✅ Approve" }, "style": "primary", "value": "={{$json.plan_id}}|APPROVED", "action_id": "approve_plan" },
-                { "type": "button", "text": { "type": "plain_text", "text": "❌ Reject" }, "style": "danger", "value": "={{$json.plan_id}}|REJECTED", "action_id": "reject_plan" }
-              ]
+              "value1": "={{$json.compliance_verdict}}",
+              "operation": "equals",
+              "value2": "PASS"
             }
           ]
         }
       },
-      "name": "Send Approval Request",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [1180, 300]
+      "name": "Compliance Gate",
+      "type": "n8n-nodes-base.if",
+      "position": [700, 400],
+      "id": "wf04-gate",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status)\nVALUES ($1, NOW()::date, $2, $3::jsonb, $4, 'PENDING_APPROVAL')\nRETURNING plan_id;",
+        "additionalFields": {
+          "queryParams": "=[$json.plan_id, $env.META_AD_ACCOUNT_ID, JSON.stringify($json.actions), $json.compliance_verdict]"
+        },
+        "options": {}
+      },
+      "name": "Save Action Plan",
+      "type": "n8n-nodes-base.postgres",
+      "position": [940, 280],
+      "id": "wf04-save",
+      "typeVersion": 2.6
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build human-readable action summary for Slack\nconst actions = $('Generate Plan ID').item.json.actions || [];\nconst plan_id = $('Generate Plan ID').item.json.plan_id;\nconst summary = $('Generate Plan ID').item.json.summary;\n\nconst actionLines = actions.slice(0, 5).map(a =>\n  `• *${a.action_type.toUpperCase()}* — ${a.entity_name || a.entity_id} (${a.entity_level}) | Risk: ${a.risk} | ${a.rationale}`\n).join('\\n');\n\nconst moreCount = actions.length > 5 ? `\\n_...and ${actions.length - 5} more actions_` : '';\n\nreturn [{ json: { plan_id, summary, actionLines: actionLines + moreCount, action_count: actions.length } }];"
+      },
+      "name": "Build Slack Message",
+      "type": "n8n-nodes-base.code",
+      "position": [1160, 280],
+      "id": "wf04-slackmsg",
+      "typeVersion": 2
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": { "text": "⛔ Action plan blocked by Compliance Agent. Review required.\nPlan: {{$json.plan_id}}" }
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "blocks",
+              "value": "=[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🤖 *New Action Plan Ready for Approval*\\nPlan ID: `\" + $json.plan_id + \"`\\n\\n*Summary:* \" + $json.summary + \"\\n\\n*Actions (" + $json.action_count + "):*\\n\" + $json.actionLines}},{\"type\":\"actions\",\"elements\":[{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"✅ Approve\"},\"style\":\"primary\",\"value\":\"\" + $json.plan_id + \"|APPROVED\",\"action_id\":\"approve_plan\"},{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"❌ Reject\"},\"style\":\"danger\",\"value\":\"\" + $json.plan_id + \"|REJECTED\",\"action_id\":\"reject_plan\"}]}]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Send Approval Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1380, 280],
+      "id": "wf04-approval",
+      "typeVersion": 4.4
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=⛔ Action plan blocked by Compliance Agent. Verdict: *{{$('Generate Plan ID').item.json.compliance_verdict}}*\\nPlan ID: `{{$('Generate Plan ID').item.json.plan_id}}`\\nReview copy variants and rerun audit."
+            }
+          ]
+        },
+        "options": {}
       },
       "name": "Notify Compliance Fail",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [940, 500]
+      "position": [940, 520],
+      "id": "wf04-compfail",
+      "typeVersion": 4.4
     }
   ],
   "connections": {
-    "Webhook Trigger": { "main": [[{ "node": "Generate Plan ID" }]] },
-    "Generate Plan ID": { "main": [[{ "node": "Compliance Gate" }]] },
+    "Webhook Trigger": {
+      "main": [[{ "node": "Generate Plan ID", "type": "main", "index": 0 }]]
+    },
+    "Generate Plan ID": {
+      "main": [[{ "node": "Compliance Gate", "type": "main", "index": 0 }]]
+    },
     "Compliance Gate": {
       "main": [
-        [{ "node": "Save Action Plan" }],
-        [{ "node": "Notify Compliance Fail" }]
+        [{ "node": "Save Action Plan", "type": "main", "index": 0 }],
+        [{ "node": "Notify Compliance Fail", "type": "main", "index": 0 }]
       ]
     },
-    "Save Action Plan": { "main": [[{ "node": "Send Approval Request" }]] }
+    "Save Action Plan": {
+      "main": [[{ "node": "Build Slack Message", "type": "main", "index": 0 }]]
+    },
+    "Build Slack Message": {
+      "main": [[{ "node": "Send Approval Request", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
   }
 }
