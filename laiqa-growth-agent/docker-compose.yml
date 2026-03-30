@@ -3,7 +3,6 @@ version: "3.9"
 services:
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped
     restart: always
     environment:
       POSTGRES_DB: laiqa
@@ -22,7 +21,6 @@ services:
 
   chroma:
     image: chromadb/chroma:latest
-    restart: unless-stopped
     restart: always
     environment:
       CHROMA_SERVER_AUTH_CREDENTIALS: ${CHROMA_AUTH_TOKEN}
@@ -35,7 +33,6 @@ services:
 
   sanitiser:
     build: ./services/sanitiser
-    restart: unless-stopped
     restart: always
     environment:
       PORT: 8001
@@ -44,7 +41,6 @@ services:
 
   vector-bridge:
     build: ./services/vector-bridge
-    restart: unless-stopped
     restart: always
     environment:
       CHROMA_HOST: chroma
@@ -59,8 +55,8 @@ services:
 
   n8n:
     image: n8nio/n8n:latest
-    restart: unless-stopped
     restart: always
+    env_file: .env
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
