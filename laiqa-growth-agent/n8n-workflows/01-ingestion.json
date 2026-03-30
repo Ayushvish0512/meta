@@ -3,71 +3,157 @@
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }] }
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
       },
       "name": "Daily 07:00 IST",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpQueryAuth",
+        "authentication": "none",
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
-            { "name": "level", "value": "campaign" },
-            { "name": "fields", "value": "campaign_id,campaign_name,impressions,reach,clicks,spend,actions,date_start,date_stop" },
-            { "name": "date_preset", "value": "yesterday" },
-            { "name": "time_increment", "value": "1" }
+            {
+              "name": "access_token",
+              "value": "={{$env.META_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "level",
+              "value": "campaign"
+            },
+            {
+              "name": "fields",
+              "value": "campaign_id,campaign_name,impressions,reach,clicks,spend,actions,date_start,date_stop"
+            },
+            {
+              "name": "date_preset",
+              "value": "yesterday"
+            },
+            {
+              "name": "time_increment",
+              "value": "1"
+            }
           ]
         },
-        "options": { "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 } }
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 5000
+          }
+        }
       },
       "name": "Fetch Campaign Insights",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [460, 200]
+      "position": [
+        460,
+        200
+      ]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
+        "authentication": "none",
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
-            { "name": "level", "value": "adset" },
-            { "name": "fields", "value": "adset_id,adset_name,campaign_id,impressions,reach,clicks,spend,actions,date_start,date_stop" },
-            { "name": "date_preset", "value": "yesterday" },
-            { "name": "time_increment", "value": "1" }
+            {
+              "name": "access_token",
+              "value": "={{$env.META_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "level",
+              "value": "adset"
+            },
+            {
+              "name": "fields",
+              "value": "adset_id,adset_name,campaign_id,impressions,reach,clicks,spend,actions,date_start,date_stop"
+            },
+            {
+              "name": "date_preset",
+              "value": "yesterday"
+            },
+            {
+              "name": "time_increment",
+              "value": "1"
+            }
           ]
         },
-        "options": { "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 } }
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 5000
+          }
+        }
       },
       "name": "Fetch AdSet Insights",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [460, 400]
+      "position": [
+        460,
+        400
+      ]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
+        "authentication": "none",
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
-            { "name": "level", "value": "ad" },
-            { "name": "fields", "value": "ad_id,ad_name,adset_id,campaign_id,impressions,reach,clicks,spend,actions,date_start,date_stop" },
-            { "name": "date_preset", "value": "yesterday" },
-            { "name": "time_increment", "value": "1" },
-            { "name": "filtering", "value": "[{\"field\":\"spend\",\"operator\":\"GREATER_THAN\",\"value\":\"0\"}]" }
+            {
+              "name": "access_token",
+              "value": "={{$env.META_ACCESS_TOKEN}}"
+            },
+            {
+              "name": "level",
+              "value": "ad"
+            },
+            {
+              "name": "fields",
+              "value": "ad_id,ad_name,adset_id,campaign_id,impressions,reach,clicks,spend,actions,date_start,date_stop"
+            },
+            {
+              "name": "date_preset",
+              "value": "yesterday"
+            },
+            {
+              "name": "time_increment",
+              "value": "1"
+            },
+            {
+              "name": "filtering",
+              "value": "[{\"field\":\"spend\",\"operator\":\"GREATER_THAN\",\"value\":\"0\"}]"
+            }
           ]
         },
-        "options": { "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 5000 } }
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 5000
+          }
+        }
       },
       "name": "Fetch Ad Insights",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [460, 600]
+      "position": [
+        460,
+        600
+      ]
     },
     {
       "parameters": {
@@ -76,7 +162,10 @@
       },
       "name": "Merge Insights",
       "type": "n8n-nodes-base.merge",
-      "position": [600, 400]
+      "position": [
+        600,
+        400
+      ]
     },
     {
       "parameters": {
@@ -84,7 +173,10 @@
       },
       "name": "Normalise + Validate",
       "type": "n8n-nodes-base.code",
-      "position": [800, 400]
+      "position": [
+        800,
+        400
+      ]
     },
     {
       "parameters": {
@@ -94,7 +186,10 @@
       },
       "name": "Upsert to Postgres",
       "type": "n8n-nodes-base.postgres",
-      "position": [1000, 400]
+      "position": [
+        1000,
+        400
+      ]
     },
     {
       "parameters": {
@@ -104,26 +199,96 @@
       },
       "name": "Trigger Embedding Refresh",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1180, 400]
+      "position": [
+        1180,
+        400
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": { "text": "❌ Meta ingestion failed: {{$json.message}}" }
+        "body": {
+          "text": "❌ Meta ingestion failed: {{$json.message}}"
+        }
       },
       "name": "Alert on Failure",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1000, 600]
+      "position": [
+        1000,
+        600
+      ]
     }
   ],
   "connections": {
-    "Daily 07:00 IST": { "main": [[{ "node": "Fetch Campaign Insights" }, { "node": "Fetch AdSet Insights" }, { "node": "Fetch Ad Insights" }]] },
-    "Fetch Campaign Insights": { "main": [[{ "node": "Merge Insights" }]] },
-    "Fetch AdSet Insights": { "main": [[{ "node": "Merge Insights" }]] },
-    "Fetch Ad Insights": { "main": [[{ "node": "Merge Insights" }]] },
-    "Merge Insights": { "main": [[{ "node": "Normalise + Validate" }]] },
-    "Normalise + Validate": { "main": [[{ "node": "Upsert to Postgres" }]] },
-    "Upsert to Postgres": { "main": [[{ "node": "Trigger Embedding Refresh" }]] }
+    "Daily 07:00 IST": {
+      "main": [
+        [
+          {
+            "node": "Fetch Campaign Insights"
+          },
+          {
+            "node": "Fetch AdSet Insights"
+          },
+          {
+            "node": "Fetch Ad Insights"
+          }
+        ]
+      ]
+    },
+    "Fetch Campaign Insights": {
+      "main": [
+        [
+          {
+            "node": "Merge Insights"
+          }
+        ]
+      ]
+    },
+    "Fetch AdSet Insights": {
+      "main": [
+        [
+          {
+            "node": "Merge Insights"
+          }
+        ]
+      ]
+    },
+    "Fetch Ad Insights": {
+      "main": [
+        [
+          {
+            "node": "Merge Insights"
+          }
+        ]
+      ]
+    },
+    "Merge Insights": {
+      "main": [
+        [
+          {
+            "node": "Normalise + Validate"
+          }
+        ]
+      ]
+    },
+    "Normalise + Validate": {
+      "main": [
+        [
+          {
+            "node": "Upsert to Postgres"
+          }
+        ]
+      ]
+    },
+    "Upsert to Postgres": {
+      "main": [
+        [
+          {
+            "node": "Trigger Embedding Refresh"
+          }
+        ]
+      ]
+    }
   }
 }
