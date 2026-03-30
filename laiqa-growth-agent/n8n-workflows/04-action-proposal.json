@@ -48,7 +48,7 @@
         "operation": "executeQuery",
         "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status)\nVALUES ($1, NOW()::date, $2, $3::jsonb, $4, 'PENDING_APPROVAL')\nRETURNING plan_id;",
         "additionalFields": {
-          "queryParams": "=[$json.plan_id, $env.META_AD_ACCOUNT_ID, JSON.stringify($json.actions), $json.compliance_verdict]"
+          "queryParams": "=[$json.plan_id, act_479122674854781, JSON.stringify($json.actions), $json.compliance_verdict]"
         },
         "options": {}
       },
@@ -71,7 +71,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "url": "={{https://hooks.slack.com/services/REDACTED}}",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -92,7 +92,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "url": "={{https://hooks.slack.com/services/REDACTED}}",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [

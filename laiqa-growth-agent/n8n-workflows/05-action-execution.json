@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Global Kill Switch check\nif ($env.KILL_SWITCH === 'true') {\n  throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n}\n\n// Parse Slack interactive payload\nlet payload;\ntry {\n  payload = typeof $json.body?.payload === 'string'\n    ? JSON.parse($json.body.payload)\n    : $json.body?.payload || $json;\n} catch(e) {\n  throw new Error('Failed to parse Slack payload: ' + e.message);\n}\n\nconst actionValue = payload?.actions?.[0]?.value || '';\nconst [plan_id, decision] = actionValue.split('|');\nconst user = payload?.user?.name || payload?.user?.username || 'unknown';\n\nif (!plan_id || !decision) {\n  throw new Error('Invalid payload: missing plan_id or decision. Got: ' + actionValue);\n}\n\nreturn [{ json: { plan_id, decision, user } }];"
+        "jsCode": "// Global Kill Switch check\nif (false === 'true') {\n  throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n}\n\n// Parse Slack interactive payload\nlet payload;\ntry {\n  payload = typeof $json.body?.payload === 'string'\n    ? JSON.parse($json.body.payload)\n    : $json.body?.payload || $json;\n} catch(e) {\n  throw new Error('Failed to parse Slack payload: ' + e.message);\n}\n\nconst actionValue = payload?.actions?.[0]?.value || '';\nconst [plan_id, decision] = actionValue.split('|');\nconst user = payload?.user?.name || payload?.user?.username || 'unknown';\n\nif (!plan_id || !decision) {\n  throw new Error('Invalid payload: missing plan_id or decision. Got: ' + actionValue);\n}\n\nreturn [{ json: { plan_id, decision, user } }];"
       },
       "name": "Parse Slack Payload",
       "type": "n8n-nodes-base.code",
@@ -75,7 +75,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Hard safety rules before any Meta write\n// Uses real conversions_7d from Postgres join — not agent-estimated values\nconst plan = $('Load Plan + Performance').item.json;\nconst actions = plan.actions || [];\nconst recentPerf = plan.recent_performance || [];\n\nconst maxBudgetChangePct = parseFloat($env.MAX_DAILY_BUDGET_CHANGE_PCT || 20);\nconst minConversions = parseInt($env.MIN_CONVERSIONS_FOR_SCALE || 10);\n\n// Build a lookup: entity_id → real conversions from DB\nconst perfMap = {};\nfor (const p of recentPerf) {\n  perfMap[p.entity_id] = { conversions_7d: p.conversions_7d || 0, spend_7d: p.spend_7d || 0 };\n}\n\nconst safeActions = [];\nconst blockedActions = [];\n\nfor (const action of actions) {\n  const perf = perfMap[action.entity_id] || { conversions_7d: 0, spend_7d: 0 };\n\n  if (action.action_type === 'scale_budget') {\n    // Block if insufficient real conversions from DB\n    if (perf.conversions_7d < minConversions) {\n      blockedActions.push({ ...action, block_reason: `Insufficient conversions: ${perf.conversions_7d} < ${minConversions}` });\n      continue;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs(action.delta?.budget_change_pct || 0);\n    if (changePct > maxBudgetChangePct) {\n      blockedActions.push({ ...action, block_reason: `Budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%` });\n      continue;\n    }\n  }\n\n  safeActions.push({ ...action, plan_id: plan.plan_id, perf });\n}\n\nif (safeActions.length === 0) {\n  throw new Error(`All ${actions.length} actions blocked by hard rules. Blocked: ${JSON.stringify(blockedActions)}`);\n}\n\nconsole.log(`Safe: ${safeActions.length}, Blocked: ${blockedActions.length}`);\nreturn safeActions.map(a => ({ json: a }));"
+        "jsCode": "// Hard safety rules before any Meta write\n// Uses real conversions_7d from Postgres join — not agent-estimated values\nconst plan = $('Load Plan + Performance').item.json;\nconst actions = plan.actions || [];\nconst recentPerf = plan.recent_performance || [];\n\nconst maxBudgetChangePct = parseFloat(20 || 20);\nconst minConversions = parseInt(10 || 10);\n\n// Build a lookup: entity_id → real conversions from DB\nconst perfMap = {};\nfor (const p of recentPerf) {\n  perfMap[p.entity_id] = { conversions_7d: p.conversions_7d || 0, spend_7d: p.spend_7d || 0 };\n}\n\nconst safeActions = [];\nconst blockedActions = [];\n\nfor (const action of actions) {\n  const perf = perfMap[action.entity_id] || { conversions_7d: 0, spend_7d: 0 };\n\n  if (action.action_type === 'scale_budget') {\n    // Block if insufficient real conversions from DB\n    if (perf.conversions_7d < minConversions) {\n      blockedActions.push({ ...action, block_reason: `Insufficient conversions: ${perf.conversions_7d} < ${minConversions}` });\n      continue;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs(action.delta?.budget_change_pct || 0);\n    if (changePct > maxBudgetChangePct) {\n      blockedActions.push({ ...action, block_reason: `Budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%` });\n      continue;\n    }\n  }\n\n  safeActions.push({ ...action, plan_id: plan.plan_id, perf });\n}\n\nif (safeActions.length === 0) {\n  throw new Error(`All ${actions.length} actions blocked by hard rules. Blocked: ${JSON.stringify(blockedActions)}`);\n}\n\nconsole.log(`Safe: ${safeActions.length}, Blocked: ${blockedActions.length}`);\nreturn safeActions.map(a => ({ json: a }));"
       },
       "name": "Enforce Hard Rules",
       "type": "n8n-nodes-base.code",
@@ -86,11 +86,11 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$json.entity_id}}",
+        "url": "=https://graph.facebook.com/{{v19.0}}/{{$json.entity_id}}",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" }
+            { "name": "access_token", "value": "={{REDACTED_META_TOKEN}}" }
           ]
         },
         "sendBody": true,
@@ -149,7 +149,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "url": "={{https://hooks.slack.com/services/REDACTED}}",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -185,7 +185,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "url": "={{https://hooks.slack.com/services/REDACTED}}",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [

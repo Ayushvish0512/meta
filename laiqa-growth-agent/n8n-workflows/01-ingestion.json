@@ -20,14 +20,14 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/={{$env.META_API_VERSION}}/={{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
+            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
             { "name": "fields", "value": "campaign_id,campaign_name,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "campaign" },
-            { "name": "time_range", "value": "={\"since\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\",\"until\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\"}" },
+            { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
             { "name": "time_increment", "value": "1" },
             { "name": "limit", "value": "500" }
           ]
@@ -44,14 +44,14 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/={{$env.META_API_VERSION}}/={{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
+            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
             { "name": "fields", "value": "adset_id,adset_name,campaign_id,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "adset" },
-            { "name": "time_range", "value": "={\"since\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\",\"until\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\"}" },
+            { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
             { "name": "time_increment", "value": "1" },
             { "name": "limit", "value": "500" }
           ]
@@ -68,14 +68,14 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/={{$env.META_API_VERSION}}/={{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{$env.META_ACCESS_TOKEN}}" },
+            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
             { "name": "fields", "value": "ad_id,ad_name,adset_id,campaign_id,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "ad" },
-            { "name": "time_range", "value": "={\"since\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\",\"until\":\"{{$today.minus({days:1}).toFormat('yyyy-MM-dd')}}\"}" },
+            { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
             { "name": "time_increment", "value": "1" },
             { "name": "limit", "value": "500" }
           ]
@@ -104,7 +104,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalise and validate Meta Insights API response\n// Extracts rows from all 3 levels and maps to schema\n\nconst items = $input.all();\nconst rows = [];\nconst date = $today.minus({ days: 1 }).toFormat('yyyy-MM-dd');\n\nfor (const item of items) {\n  const data = item.json.data || [];\n\n  for (const row of data) {\n    // Determine entity level and ID\n    let entity_level, entity_id, parent_id;\n    if (row.ad_id) {\n      entity_level = 'ad';\n      entity_id = row.ad_id;\n      parent_id = row.adset_id || null;\n    } else if (row.adset_id) {\n      entity_level = 'adset';\n      entity_id = row.adset_id;\n      parent_id = row.campaign_id || null;\n    } else if (row.campaign_id) {\n      entity_level = 'campaign';\n      entity_id = row.campaign_id;\n      parent_id = null;\n    } else {\n      continue; // skip unidentifiable rows\n    }\n\n    // Extract conversions from actions array\n    const conversionTypes = [\n      'purchase',\n      'offsite_conversion.fb_pixel_purchase',\n      'omni_purchase',\n      'lead',\n      'offsite_complete_registration_add_meta_leads',\n      'onsite_conversion.lead_grouped'\n    ];\n    const conversions = (row.actions || [])\n      .filter(a => conversionTypes.includes(a.action_type))\n      .reduce((sum, a) => sum + parseInt(a.value || 0, 10), 0);\n\n    const impressions = parseInt(row.impressions || 0, 10);\n    const reach = parseInt(row.reach || 0, 10);\n    const clicks = parseInt(row.clicks || 0, 10);\n    const spend = parseFloat(row.spend || 0);\n\n    // Validate: skip rows with zero impressions (delivery not started)\n    if (impressions === 0 && spend === 0) continue;\n\n    rows.push({\n      date,\n      entity_level,\n      entity_id,\n      parent_id,\n      impressions,\n      reach,\n      clicks,\n      spend,\n      conversions,\n      breakdown_key: 'none',\n      raw_json: JSON.stringify(row)\n    });\n  }\n}\n\nif (rows.length === 0) {\n  throw new Error('VALIDATION_FAILED: No valid rows extracted from Meta API response. Check fields and date range.');\n}\n\nreturn rows.map(r => ({ json: r }));"
+        "jsCode": "const items = $input.all();\nconst rows = [];\nconst date = $today.minus({ days: 1 }).toFormat('yyyy-MM-dd');\n\nfor (const item of items) {\n  const data = item.json.data || [];\n  for (const row of data) {\n    let entity_level, entity_id;\n    if (row.ad_id) {\n      entity_level = 'ad'; entity_id = row.ad_id;\n    } else if (row.adset_id) {\n      entity_level = 'adset'; entity_id = row.adset_id;\n    } else if (row.campaign_id) {\n      entity_level = 'campaign'; entity_id = row.campaign_id;\n    } else continue;\n\n    const conversionTypes = [\n      'purchase', 'offsite_conversion.fb_pixel_purchase', 'omni_purchase',\n      'lead', 'offsite_complete_registration_add_meta_leads', 'onsite_conversion.lead_grouped'\n    ];\n    const conversions = (row.actions || [])\n      .filter(a => conversionTypes.includes(a.action_type))\n      .reduce((sum, a) => sum + parseInt(a.value || 0, 10), 0);\n\n    const impressions = parseInt(row.impressions || 0, 10);\n    const reach = parseInt(row.reach || 0, 10);\n    const clicks = parseInt(row.clicks || 0, 10);\n    const spend = parseFloat(row.spend || 0);\n\n    if (impressions === 0 && spend === 0) continue;\n\n    rows.push({ date, entity_level, entity_id, impressions, reach, clicks, spend, conversions, breakdown_key: 'none', raw_json: JSON.stringify(row) });\n  }\n}\n\nif (rows.length === 0) throw new Error('VALIDATION_FAILED: No valid rows from Meta API.');\nreturn rows.map(r => ({ json: r }));"
       },
       "name": "Normalise + Validate",
       "type": "n8n-nodes-base.code",
@@ -115,7 +115,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO meta_insights_daily (date, entity_level, entity_id, breakdown_key, impressions, reach, clicks, spend, conversions, raw_json)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)\nON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET\n  impressions = EXCLUDED.impressions,\n  reach = EXCLUDED.reach,\n  clicks = EXCLUDED.clicks,\n  spend = EXCLUDED.spend,\n  conversions = EXCLUDED.conversions,\n  raw_json = EXCLUDED.raw_json,\n  ingested_at = NOW();",
+        "query": "INSERT INTO meta_insights_daily (date, entity_level, entity_id, breakdown_key, impressions, reach, clicks, spend, conversions, raw_json)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)\nON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET\n  impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, clicks = EXCLUDED.clicks,\n  spend = EXCLUDED.spend, conversions = EXCLUDED.conversions,\n  raw_json = EXCLUDED.raw_json, ingested_at = NOW();",
         "additionalFields": {
           "queryParams": "={{[$json.date, $json.entity_level, $json.entity_id, $json.breakdown_key, $json.impressions, $json.reach, $json.clicks, $json.spend, $json.conversions, $json.raw_json]}}"
         },
@@ -142,7 +142,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "url": "https://hooks.slack.com/services/REDACTED",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
