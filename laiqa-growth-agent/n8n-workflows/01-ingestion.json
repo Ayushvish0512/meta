@@ -1,5 +1,5 @@
 {
-  "name": "01 - Meta Ingestion",
+  "name": "01 - Meta Ingestion (Hardcoded)",
   "nodes": [
     {
       "parameters": {
@@ -22,13 +22,13 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "authentication": "none",
         "queryParameters": {
           "parameters": [
             {
               "name": "access_token",
-              "value": "={{$env.META_ACCESS_TOKEN}}"
+              "value": "EAAUVGjTuEsEBRPpAeSXeL89YiB25l5FVTM3B24HfeiqHm47XATtdS4i6HFTQ4O3YfXPZAQBX8JGcpk0nnRtDY3ZByokDTeP0xnPeBTs9ZBKGpJZAVHmybhkMOnkQnL8P1AodZAiZBa7CaOzbodnOtTOeXqBZBfyfYxiMkvd6mpgCYiupW5GipuIeLFzt5HkSHpxhZBoeQXjm"
             },
             {
               "name": "level",
@@ -66,13 +66,13 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "authentication": "none",
         "queryParameters": {
           "parameters": [
             {
               "name": "access_token",
-              "value": "={{$env.META_ACCESS_TOKEN}}"
+              "value": "EAAUVGjTuEsEBRPpAeSXeL89YiB25l5FVTM3B24HfeiqHm47XATtdS4i6HFTQ4O3YfXPZAQBX8JGcpk0nnRtDY3ZByokDTeP0xnPeBTs9ZBKGpJZAVHmybhkMOnkQnL8P1AodZAiZBa7CaOzbodnOtTOeXqBZBfyfYxiMkvd6mpgCYiupW5GipuIeLFzt5HkSHpxhZBoeQXjm"
             },
             {
               "name": "level",
@@ -110,13 +110,13 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://graph.facebook.com/{{$env.META_API_VERSION}}/{{$env.META_AD_ACCOUNT_ID}}/insights",
+        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
         "authentication": "none",
         "queryParameters": {
           "parameters": [
             {
               "name": "access_token",
-              "value": "={{$env.META_ACCESS_TOKEN}}"
+              "value": "EAAUVGjTuEsEBRPpAeSXeL89YiB25l5FVTM3B24HfeiqHm47XATtdS4i6HFTQ4O3YfXPZAQBX8JGcpk0nnRtDY3ZByokDTeP0xnPeBTs9ZBKGpJZAVHmybhkMOnkQnL8P1AodZAiZBa7CaOzbodnOtTOeXqBZBfyfYxiMkvd6mpgCYiupW5GipuIeLFzt5HkSHpxhZBoeQXjm"
             },
             {
               "name": "level",
@@ -169,7 +169,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalise and validate all three insight levels\n// When using Merge node with combine by position, the data is available in $input.all()\n// However, for simplicity with the existing code, we can reference the specific nodes\nconst campaigns = $('Fetch Campaign Insights').item.json.data || [];\nconst adsets = $('Fetch AdSet Insights').item.json.data || [];\nconst ads = $('Fetch Ad Insights').item.json.data || [];\n\nconst allRows = [];\n\nconst normalise = (rows, level, idField) => rows.map(r => ({\n  date: r.date_start,\n  entity_level: level,\n  entity_id: r[idField],\n  impressions: parseInt(r.impressions || 0),\n  reach: parseInt(r.reach || 0),\n  clicks: parseInt(r.clicks || 0),\n  spend: parseFloat(r.spend || 0),\n  conversions: (r.actions || []).filter(a => a.action_type === 'purchase').reduce((s, a) => s + parseInt(a.value || 0), 0),\n  raw_json: JSON.stringify(r)\n}));\n\nallRows.push(...normalise(campaigns, 'campaign', 'campaign_id'));\nallRows.push(...normalise(adsets, 'adset', 'adset_id'));\nallRows.push(...normalise(ads, 'ad', 'ad_id'));\n\n// Completeness check\nconst totalSpend = allRows.filter(r => r.entity_level === 'campaign').reduce((s, r) => s + r.spend, 0);\nif (totalSpend === 0) throw new Error('COMPLETENESS_FAIL: zero spend across all campaigns for yesterday');\n\nreturn allRows.map(r => ({ json: r }));"
+        "jsCode": "const campaigns = $('Fetch Campaign Insights').item.json.data || [];\nconst adsets = $('Fetch AdSet Insights').item.json.data || [];\nconst ads = $('Fetch Ad Insights').item.json.data || [];\n\nconst allRows = [];\n\nconst normalise = (rows, level, idField) => rows.map(r => ({\n  date: r.date_start,\n  entity_level: level,\n  entity_id: r[idField],\n  impressions: parseInt(r.impressions || 0),\n  reach: parseInt(r.reach || 0),\n  clicks: parseInt(r.clicks || 0),\n  spend: parseFloat(r.spend || 0),\n  conversions: (r.actions || []).filter(a => a.action_type === 'purchase').reduce((s, a) => s + parseInt(a.value || 0), 0),\n  raw_json: JSON.stringify(r)\n}));\n\nallRows.push(...normalise(campaigns, 'campaign', 'campaign_id'));\nallRows.push(...normalise(adsets, 'adset', 'adset_id'));\nallRows.push(...normalise(ads, 'ad', 'ad_id'));\n\nreturn allRows.map(r => ({ json: r }));"
       },
       "name": "Normalise + Validate",
       "type": "n8n-nodes-base.code",
@@ -189,34 +189,6 @@
       "position": [
         1000,
         400
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://n8n:5678/webhook/embedding-refresh",
-        "options": {}
-      },
-      "name": "Trigger Embedding Refresh",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        1180,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.SLACK_WEBHOOK_URL}}",
-        "body": {
-          "text": "❌ Meta ingestion failed: {{$json.message}}"
-        }
-      },
-      "name": "Alert on Failure",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        1000,
-        600
       ]
     }
   ],
@@ -277,15 +249,6 @@
         [
           {
             "node": "Upsert to Postgres"
-          }
-        ]
-      ]
-    },
-    "Upsert to Postgres": {
-      "main": [
-        [
-          {
-            "node": "Trigger Embedding Refresh"
           }
         ]
       ]
