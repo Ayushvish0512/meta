@@ -1,0 +1,23 @@
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+venv/
+ENV/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# n8n
+.n8n/
+nodes/
