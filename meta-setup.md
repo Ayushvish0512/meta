@@ -46,10 +46,10 @@ To extract deep features for AI analysis, use the following technical specs for 
 Update your `.env` with these verified values:
 ```env
 META_ACCESS_TOKEN=your_token
-META_AD_ACCOUNT_ID=479122674854781
+META_AD_ACCOUNT_ID=YOUR_AD_ACCOUNT_ID
 META_API_VERSION=v19.0
 ```
 
 ## 6. Verification
 Run a test fetch to ensure connectivity:
-`curl -G "https://graph.facebook.com/v19.0/act_479122674854781/insights?access_token=<TOKEN>&date_preset=yesterday"`
+`curl -G "https://graph.facebook.com/v19.0/act_YOUR_AD_ACCOUNT_ID/insights?access_token=<TOKEN>&date_preset=yesterday"`

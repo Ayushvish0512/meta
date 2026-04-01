@@ -86,10 +86,12 @@ CREATE TABLE IF NOT EXISTS action_plans (
     actions JSONB NOT NULL,
     guardrails JSONB,
     evidence_refs TEXT[],
-    compliance_verdict TEXT,
+    compliance_verdict TEXT CHECK (compliance_verdict IN ('PASS', 'FAIL', 'NEEDS_REVISION')),
     status TEXT DEFAULT 'PENDING_APPROVAL',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+
 
 CREATE TABLE IF NOT EXISTS approvals (
     approval_id SERIAL PRIMARY KEY,
@@ -121,3 +123,7 @@ CREATE TABLE IF NOT EXISTS embedding_job_runs (
     status TEXT,
     ran_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_action_plans_status ON action_plans(status);
+CREATE INDEX IF NOT EXISTS idx_actions_executed_plan_id ON actions_executed(plan_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_name_time ON agent_runs(agent_name, started_at);

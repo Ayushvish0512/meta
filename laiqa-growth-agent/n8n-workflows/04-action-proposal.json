@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Generate a unique plan ID and validate incoming payload\nconst plan_id = 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);\nconst actions = $json.actions || [];\nconst compliance_verdict = $json.compliance_verdict || 'FAIL';\nconst summary = $json.summary || 'No summary provided';\n\nif (actions.length === 0) {\n  throw new Error('No actions received from WF03. Nothing to propose.');\n}\n\nreturn [{ json: { plan_id, actions, compliance_verdict, summary } }];"
+        "jsCode": "const plan_id = 'plan_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);\nconst actions = $json.actions || [];\nconst compliance_verdict = $json.compliance_verdict || 'FAIL';\nconst summary = $json.summary || 'No summary provided';\nif (actions.length === 0) throw new Error('No actions received from WF03.');\nreturn [{ json: { plan_id, actions, compliance_verdict, summary } }];"
       },
       "name": "Generate Plan ID",
       "type": "n8n-nodes-base.code",
@@ -28,13 +28,7 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.compliance_verdict}}",
-              "operation": "equals",
-              "value2": "PASS"
-            }
-          ]
+          "string": [{ "value1": "={{$json.compliance_verdict}}", "operation": "equals", "value2": "PASS" }]
         }
       },
       "name": "Compliance Gate",
@@ -46,10 +40,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status)\nVALUES ($1, NOW()::date, $2, $3::jsonb, $4, 'PENDING_APPROVAL')\nRETURNING plan_id;",
-        "additionalFields": {
-          "queryParams": "=[$json.plan_id, act_479122674854781, JSON.stringify($json.actions), $json.compliance_verdict]"
-        },
+        "query": "={{`INSERT INTO action_plans (plan_id, date, account_id, actions, compliance_verdict, status) VALUES ('${$json.plan_id}', NOW()::date, 'YOUR_AD_ACCOUNT_ID', '${JSON.stringify($json.actions).replace(/'/g,\"''\")}'::jsonb, '${$json.compliance_verdict}', 'PENDING_APPROVAL')`}}",
         "options": {}
       },
       "name": "Save Action Plan",
@@ -60,7 +51,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build human-readable action summary for Slack\nconst actions = $('Generate Plan ID').item.json.actions || [];\nconst plan_id = $('Generate Plan ID').item.json.plan_id;\nconst summary = $('Generate Plan ID').item.json.summary;\n\nconst actionLines = actions.slice(0, 5).map(a =>\n  `• *${a.action_type.toUpperCase()}* — ${a.entity_name || a.entity_id} (${a.entity_level}) | Risk: ${a.risk} | ${a.rationale}`\n).join('\\n');\n\nconst moreCount = actions.length > 5 ? `\\n_...and ${actions.length - 5} more actions_` : '';\n\nreturn [{ json: { plan_id, summary, actionLines: actionLines + moreCount, action_count: actions.length } }];"
+        "jsCode": "const actions = $('Generate Plan ID').item.json.actions || [];\nconst plan_id = $('Generate Plan ID').item.json.plan_id;\nconst summary = $('Generate Plan ID').item.json.summary;\nconst actionLines = actions.slice(0,5).map(a => `• *${a.action_type.toUpperCase()}* — ${a.entity_name||a.entity_id} (${a.entity_level}) | Risk: ${a.risk} | ${a.rationale}`).join('\\n');\nconst moreCount = actions.length > 5 ? `\\n_...and ${actions.length-5} more_` : '';\nreturn [{ json: { plan_id, summary, actionLines: actionLines+moreCount, action_count: actions.length } }];"
       },
       "name": "Build Slack Message",
       "type": "n8n-nodes-base.code",
@@ -71,16 +62,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{https://hooks.slack.com/services/REDACTED}}",
+        "url": "https://hooks.slack.com/services/YOUR_WEBHOOK_URL_HERE",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "blocks",
-              "value": "=[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🤖 *New Action Plan Ready for Approval*\\nPlan ID: `\" + $json.plan_id + \"`\\n\\n*Summary:* \" + $json.summary + \"\\n\\n*Actions (" + $json.action_count + "):*\\n\" + $json.actionLines}},{\"type\":\"actions\",\"elements\":[{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"✅ Approve\"},\"style\":\"primary\",\"value\":\"\" + $json.plan_id + \"|APPROVED\",\"action_id\":\"approve_plan\"},{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"❌ Reject\"},\"style\":\"danger\",\"value\":\"\" + $json.plan_id + \"|REJECTED\",\"action_id\":\"reject_plan\"}]}]"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"🤖 *New Action Plan Ready for Approval*\\nPlan ID: `\" + $json.plan_id + \"`\\n\\n*Summary:* \" + $json.summary + \"\\n\\n*Actions (\" + $json.action_count + \"):*\\n\" + $json.actionLines}},{\"type\":\"actions\",\"elements\":[{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"✅ Approve\"},\"style\":\"primary\",\"value\":\"\" + $json.plan_id + \"|APPROVED\",\"action_id\":\"approve_plan\"},{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"❌ Reject\"},\"style\":\"danger\",\"value\":\"\" + $json.plan_id + \"|REJECTED\",\"action_id\":\"reject_plan\"}]}]}",
         "options": {}
       },
       "name": "Send Approval Request",
@@ -92,15 +77,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{https://hooks.slack.com/services/REDACTED}}",
+        "url": "https://hooks.slack.com/services/YOUR_WEBHOOK_URL_HERE",
         "sendBody": true,
         "bodyParameters": {
-          "parameters": [
-            {
-              "name": "text",
-              "value": "=⛔ Action plan blocked by Compliance Agent. Verdict: *{{$('Generate Plan ID').item.json.compliance_verdict}}*\\nPlan ID: `{{$('Generate Plan ID').item.json.plan_id}}`\\nReview copy variants and rerun audit."
-            }
-          ]
+          "parameters": [{
+            "name": "text",
+            "value": "=⛔ Action plan blocked by Compliance Agent. Verdict: *{{$('Generate Plan ID').item.json.compliance_verdict}}*\\nPlan ID: `{{$('Generate Plan ID').item.json.plan_id}}`"
+          }]
         },
         "options": {}
       },
@@ -112,28 +95,12 @@
     }
   ],
   "connections": {
-    "Webhook Trigger": {
-      "main": [[{ "node": "Generate Plan ID", "type": "main", "index": 0 }]]
-    },
-    "Generate Plan ID": {
-      "main": [[{ "node": "Compliance Gate", "type": "main", "index": 0 }]]
-    },
-    "Compliance Gate": {
-      "main": [
-        [{ "node": "Save Action Plan", "type": "main", "index": 0 }],
-        [{ "node": "Notify Compliance Fail", "type": "main", "index": 0 }]
-      ]
-    },
-    "Save Action Plan": {
-      "main": [[{ "node": "Build Slack Message", "type": "main", "index": 0 }]]
-    },
-    "Build Slack Message": {
-      "main": [[{ "node": "Send Approval Request", "type": "main", "index": 0 }]]
-    }
+    "Webhook Trigger": { "main": [[{ "node": "Generate Plan ID", "type": "main", "index": 0 }]] },
+    "Generate Plan ID": { "main": [[{ "node": "Compliance Gate", "type": "main", "index": 0 }]] },
+    "Compliance Gate": { "main": [[{ "node": "Save Action Plan", "type": "main", "index": 0 }], [{ "node": "Notify Compliance Fail", "type": "main", "index": 0 }]] },
+    "Save Action Plan": { "main": [[{ "node": "Build Slack Message", "type": "main", "index": 0 }]] },
+    "Build Slack Message": { "main": [[{ "node": "Send Approval Request", "type": "main", "index": 0 }]] }
   },
   "pinData": {},
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
-  }
+  "meta": { "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31" }
 }

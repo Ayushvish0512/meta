@@ -73,9 +73,15 @@ class QueryResponse(BaseModel):
 
 @app.post("/upsert", response_model=UpsertResponse, dependencies=[Depends(verify_key)])
 async def upsert(req: UpsertRequest):
-    embedding = await embed_text(req.text)
     checksum = hashlib.md5(req.text.encode()).hexdigest()
     collection = get_collection()
+    
+    # Check for existing document with same ID
+    existing = collection.get(ids=[req.doc_id], include=["metadatas"])
+    if existing["metadatas"] and existing["metadatas"][0].get("checksum") == checksum:
+        return UpsertResponse(doc_id=req.doc_id, checksum=checksum)
+
+    embedding = await embed_text(req.text)
     collection.upsert(
         ids=[req.doc_id],
         embeddings=[embedding],

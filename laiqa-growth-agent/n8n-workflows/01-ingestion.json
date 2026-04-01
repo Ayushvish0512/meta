@@ -20,11 +20,11 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
+        "url": "https://graph.facebook.com/v19.0/YOUR_AD_ACCOUNT_ID/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
+            { "name": "access_token", "value": "YOUR_META_ACCESS_TOKEN_HERE" },
             { "name": "fields", "value": "campaign_id,campaign_name,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "campaign" },
             { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
@@ -44,11 +44,11 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
+        "url": "https://graph.facebook.com/v19.0/YOUR_AD_ACCOUNT_ID/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
+            { "name": "access_token", "value": "YOUR_META_ACCESS_TOKEN_HERE" },
             { "name": "fields", "value": "adset_id,adset_name,campaign_id,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "adset" },
             { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
@@ -68,11 +68,11 @@
     },
     {
       "parameters": {
-        "url": "https://graph.facebook.com/v19.0/act_479122674854781/insights",
+        "url": "https://graph.facebook.com/v19.0/YOUR_AD_ACCOUNT_ID/insights",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "REDACTED_META_TOKEN" },
+            { "name": "access_token", "value": "YOUR_META_ACCESS_TOKEN_HERE" },
             { "name": "fields", "value": "ad_id,ad_name,adset_id,campaign_id,impressions,reach,clicks,spend,actions,frequency,ctr,cpc,cpp,account_currency" },
             { "name": "level", "value": "ad" },
             { "name": "time_range", "value": "={{'{\"since\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\",\"until\":\"' + $today.minus({days:1}).toFormat('yyyy-MM-dd') + '\"}'}}" },
@@ -114,11 +114,18 @@
     },
     {
       "parameters": {
+        "jsCode": "// Prepare safely escaped Postgres query\nconst r = $json;\nconst safeJson = (r.raw_json || '{}').replace(/'/g, \"''\");\n\nreturn [{ json: {\n  ...r,\n  pg_query: `INSERT INTO meta_insights_daily (date, entity_level, entity_id, breakdown_key, impressions, reach, clicks, spend, conversions, raw_json) VALUES ('${r.date}', '${r.entity_level}', '${r.entity_id}', '${r.breakdown_key}', ${r.impressions}, ${r.reach}, ${r.clicks}, ${r.spend}, ${r.conversions}, '${safeJson}'::jsonb) ON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, clicks = EXCLUDED.clicks, spend = EXCLUDED.spend, conversions = EXCLUDED.conversions, raw_json = EXCLUDED.raw_json, ingested_at = NOW()`\n} }];"
+      },
+      "name": "Prepare Parameters",
+      "type": "n8n-nodes-base.code",
+      "position": [-480, -128],
+      "id": "prepare-params-node",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO meta_insights_daily (date, entity_level, entity_id, breakdown_key, impressions, reach, clicks, spend, conversions, raw_json)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)\nON CONFLICT (date, entity_level, entity_id, breakdown_key) DO UPDATE SET\n  impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, clicks = EXCLUDED.clicks,\n  spend = EXCLUDED.spend, conversions = EXCLUDED.conversions,\n  raw_json = EXCLUDED.raw_json, ingested_at = NOW();",
-        "additionalFields": {
-          "queryParams": "={{[$json.date, $json.entity_level, $json.entity_id, $json.breakdown_key, $json.impressions, $json.reach, $json.clicks, $json.spend, $json.conversions, $json.raw_json]}}"
-        },
+        "query": "={{$json.pg_query}}",
         "options": {}
       },
       "name": "Upsert to Postgres",
@@ -179,8 +186,11 @@
       "main": [[{ "node": "Normalise + Validate", "type": "main", "index": 0 }]]
     },
     "Normalise + Validate": {
-      "main": [[{ "node": "Upsert to Postgres", "type": "main", "index": 0 }]],
+      "main": [[{ "node": "Prepare Parameters", "type": "main", "index": 0 }]],
       "error": [[{ "node": "Alert on Failure", "type": "main", "index": 0 }]]
+    },
+    "Prepare Parameters": {
+      "main": [[{ "node": "Upsert to Postgres", "type": "main", "index": 0 }]]
     },
     "Upsert to Postgres": {
       "main": [[{ "node": "Trigger Embedding Refresh", "type": "main", "index": 0 }]],

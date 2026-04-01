@@ -18,7 +18,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  'PERFORMANCE_CARD' AS doc_type,\n  entity_id || '_' || date::text AS doc_id,\n  'DOC_TYPE=PERFORMANCE_CARD' ||\n  '\\nDATE=' || date ||\n  '\\nLEVEL=' || entity_level ||\n  '\\nID=' || entity_id ||\n  '\\nSPEND=' || spend ||\n  '\\nIMPRESSIONS=' || impressions ||\n  '\\nCLICKS=' || clicks ||\n  '\\nCONVERSIONS=' || conversions ||\n  '\\nFREQUENCY=' || ROUND(frequency, 2) ||\n  '\\nCTR=' || ROUND(ctr * 100, 3) || '%' ||\n  '\\nCPA=' || COALESCE(cpa::text, 'N/A') AS text_content,\n  json_build_object(\n    'doc_type', 'PERFORMANCE_CARD',\n    'entity_level', entity_level,\n    'entity_id', entity_id,\n    'date', date::text,\n    'funnel_stage', 'PERFORMANCE'\n  ) AS metadata\nFROM meta_insights_daily\nWHERE date >= NOW() - INTERVAL '30 days'\n  AND entity_level IN ('adset', 'ad')\n  AND impressions > 0\nORDER BY date DESC\nLIMIT 500;",
+        "query": "SELECT 'PERFORMANCE_CARD' AS doc_type, entity_id || '_' || date::text AS doc_id, 'DOC_TYPE=PERFORMANCE_CARD\\nDATE=' || date || '\\nLEVEL=' || entity_level || '\\nID=' || entity_id || '\\nSPEND=' || spend || '\\nIMPRESSIONS=' || impressions || '\\nCLICKS=' || clicks || '\\nCONVERSIONS=' || conversions || '\\nFREQUENCY=' || ROUND(frequency,2) || '\\nCTR=' || ROUND(ctr*100,3) || '%\\nCPA=' || COALESCE(cpa::text,'N/A') AS text_content, json_build_object('doc_type','PERFORMANCE_CARD','entity_level',entity_level,'entity_id',entity_id,'date',date::text,'funnel_stage','PERFORMANCE') AS metadata FROM meta_insights_daily WHERE date >= NOW() - INTERVAL '30 days' AND entity_level IN ('adset','ad') AND impressions > 0 ORDER BY date DESC LIMIT 500;",
         "options": {}
       },
       "name": "Fetch Performance Cards",
@@ -34,7 +34,7 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-API-Key", "value": "={{qwe4567yui89hjvbmnb}}" },
+            { "name": "X-API-Key", "value": "YOUR_INTERNAL_API_KEY_HERE" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
@@ -44,9 +44,7 @@
             { "name": "text", "value": "={{$json.text_content}}" }
           ]
         },
-        "options": {
-          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 }
-        }
+        "options": { "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 } }
       },
       "name": "Call Sanitiser",
       "type": "n8n-nodes-base.httpRequest",
@@ -61,7 +59,7 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "X-API-Key", "value": "={{qwe4567yui89hjvbmnb}}" },
+            { "name": "X-API-Key", "value": "YOUR_INTERNAL_API_KEY_HERE" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
@@ -73,9 +71,7 @@
             { "name": "metadata", "value": "={{$('Fetch Performance Cards').item.json.metadata}}" }
           ]
         },
-        "options": {
-          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 }
-        }
+        "options": { "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 } }
       },
       "name": "Upsert to Chroma",
       "type": "n8n-nodes-base.httpRequest",
@@ -86,10 +82,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO embedding_job_runs (doc_type, doc_count, status) VALUES ($1, $2, $3);",
-        "additionalFields": {
-          "queryParams": "=['PERFORMANCE_CARD', $('Fetch Performance Cards').all().length, 'SUCCESS']"
-        },
+        "query": "INSERT INTO embedding_job_runs (doc_type, doc_count, status) VALUES ('PERFORMANCE_CARD', 1, 'SUCCESS');",
         "options": {}
       },
       "name": "Log Job Run",
@@ -112,25 +105,12 @@
     }
   ],
   "connections": {
-    "Webhook Trigger": {
-      "main": [[{ "node": "Fetch Performance Cards", "type": "main", "index": 0 }]]
-    },
-    "Fetch Performance Cards": {
-      "main": [[{ "node": "Call Sanitiser", "type": "main", "index": 0 }]]
-    },
-    "Call Sanitiser": {
-      "main": [[{ "node": "Upsert to Chroma", "type": "main", "index": 0 }]]
-    },
-    "Upsert to Chroma": {
-      "main": [[{ "node": "Log Job Run", "type": "main", "index": 0 }]]
-    },
-    "Log Job Run": {
-      "main": [[{ "node": "Trigger Daily Audit", "type": "main", "index": 0 }]]
-    }
+    "Webhook Trigger": { "main": [[{ "node": "Fetch Performance Cards", "type": "main", "index": 0 }]] },
+    "Fetch Performance Cards": { "main": [[{ "node": "Call Sanitiser", "type": "main", "index": 0 }]] },
+    "Call Sanitiser": { "main": [[{ "node": "Upsert to Chroma", "type": "main", "index": 0 }]] },
+    "Upsert to Chroma": { "main": [[{ "node": "Log Job Run", "type": "main", "index": 0 }]] },
+    "Log Job Run": { "main": [[{ "node": "Trigger Daily Audit", "type": "main", "index": 0 }]] }
   },
   "pinData": {},
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
-  }
+  "meta": { "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31" }
 }

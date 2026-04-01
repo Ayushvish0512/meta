@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Global Kill Switch check\nif (false === 'true') {\n  throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n}\n\n// Parse Slack interactive payload\nlet payload;\ntry {\n  payload = typeof $json.body?.payload === 'string'\n    ? JSON.parse($json.body.payload)\n    : $json.body?.payload || $json;\n} catch(e) {\n  throw new Error('Failed to parse Slack payload: ' + e.message);\n}\n\nconst actionValue = payload?.actions?.[0]?.value || '';\nconst [plan_id, decision] = actionValue.split('|');\nconst user = payload?.user?.name || payload?.user?.username || 'unknown';\n\nif (!plan_id || !decision) {\n  throw new Error('Invalid payload: missing plan_id or decision. Got: ' + actionValue);\n}\n\nreturn [{ json: { plan_id, decision, user } }];"
+        "jsCode": "// Kill switch — set to true to disable all Meta writes\nconst KILL_SWITCH = false;\nif (KILL_SWITCH) throw new Error('KILL_SWITCH_ACTIVE: Meta writes are globally disabled.');\n\nlet payload;\ntry {\n  payload = typeof $json.body?.payload === 'string' ? JSON.parse($json.body.payload) : ($json.body?.payload || $json);\n} catch(e) { throw new Error('Failed to parse Slack payload: ' + e.message); }\n\nconst actionValue = payload?.actions?.[0]?.value || '';\nconst [plan_id, decision] = actionValue.split('|');\nconst user = payload?.user?.name || payload?.user?.username || 'unknown';\nif (!plan_id || !decision) throw new Error('Invalid payload: missing plan_id or decision.');\nreturn [{ json: { plan_id, decision, user } }];"
       },
       "name": "Parse Slack Payload",
       "type": "n8n-nodes-base.code",
@@ -28,13 +28,7 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.decision}}",
-              "operation": "equals",
-              "value2": "APPROVED"
-            }
-          ]
+          "string": [{ "value1": "={{$json.decision}}", "operation": "equals", "value2": "APPROVED" }]
         }
       },
       "name": "Check Approved",
@@ -46,10 +40,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ap.*, \n  COALESCE(\n    (SELECT json_agg(json_build_object('entity_id', mid.entity_id, 'conversions_7d', SUM(mid.conversions), 'spend_7d', SUM(mid.spend)))\n     FROM meta_insights_daily mid\n     WHERE mid.date >= NOW() - INTERVAL '7 days'\n     GROUP BY mid.entity_id),\n    '[]'::json\n  ) AS recent_performance\nFROM action_plans ap\nWHERE ap.plan_id = $1 AND ap.status = 'PENDING_APPROVAL';",
-        "additionalFields": {
-          "queryParams": "=[$json.plan_id]"
-        },
+        "query": "={{`SELECT ap.*, COALESCE((SELECT json_agg(json_build_object('entity_id', mid.entity_id, 'conversions_7d', SUM(mid.conversions), 'spend_7d', SUM(mid.spend))) FROM meta_insights_daily mid WHERE mid.date >= NOW() - INTERVAL '7 days' GROUP BY mid.entity_id), '[]'::json) AS recent_performance FROM action_plans ap WHERE ap.plan_id = '${$json.plan_id}' AND ap.status = 'PENDING_APPROVAL'`}}",
         "options": {}
       },
       "name": "Load Plan + Performance",
@@ -61,10 +52,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO approvals (plan_id, approver, decision) VALUES ($1, $2, $3);",
-        "additionalFields": {
-          "queryParams": "=[$('Parse Slack Payload').item.json.plan_id, $('Parse Slack Payload').item.json.user, $('Parse Slack Payload').item.json.decision]"
-        },
+        "query": "={{`INSERT INTO approvals (plan_id, approver, decision) VALUES ('${$('Parse Slack Payload').item.json.plan_id}', '${$('Parse Slack Payload').item.json.user}', '${$('Parse Slack Payload').item.json.decision}')`}}",
         "options": {}
       },
       "name": "Record Approval",
@@ -75,7 +63,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Hard safety rules before any Meta write\n// Uses real conversions_7d from Postgres join — not agent-estimated values\nconst plan = $('Load Plan + Performance').item.json;\nconst actions = plan.actions || [];\nconst recentPerf = plan.recent_performance || [];\n\nconst maxBudgetChangePct = parseFloat(20 || 20);\nconst minConversions = parseInt(10 || 10);\n\n// Build a lookup: entity_id → real conversions from DB\nconst perfMap = {};\nfor (const p of recentPerf) {\n  perfMap[p.entity_id] = { conversions_7d: p.conversions_7d || 0, spend_7d: p.spend_7d || 0 };\n}\n\nconst safeActions = [];\nconst blockedActions = [];\n\nfor (const action of actions) {\n  const perf = perfMap[action.entity_id] || { conversions_7d: 0, spend_7d: 0 };\n\n  if (action.action_type === 'scale_budget') {\n    // Block if insufficient real conversions from DB\n    if (perf.conversions_7d < minConversions) {\n      blockedActions.push({ ...action, block_reason: `Insufficient conversions: ${perf.conversions_7d} < ${minConversions}` });\n      continue;\n    }\n    // Block if budget change exceeds cap\n    const changePct = Math.abs(action.delta?.budget_change_pct || 0);\n    if (changePct > maxBudgetChangePct) {\n      blockedActions.push({ ...action, block_reason: `Budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%` });\n      continue;\n    }\n  }\n\n  safeActions.push({ ...action, plan_id: plan.plan_id, perf });\n}\n\nif (safeActions.length === 0) {\n  throw new Error(`All ${actions.length} actions blocked by hard rules. Blocked: ${JSON.stringify(blockedActions)}`);\n}\n\nconsole.log(`Safe: ${safeActions.length}, Blocked: ${blockedActions.length}`);\nreturn safeActions.map(a => ({ json: a }));"
+        "jsCode": "const plan = $('Load Plan + Performance').item.json;\nconst actions = plan.actions || [];\nconst recentPerf = plan.recent_performance || [];\nconst maxBudgetChangePct = 20;\nconst minConversions = 10;\n\nconst perfMap = {};\nfor (const p of recentPerf) { perfMap[p.entity_id] = { conversions_7d: p.conversions_7d||0, spend_7d: p.spend_7d||0 }; }\n\nconst safeActions = [], blockedActions = [];\nfor (const action of actions) {\n  const perf = perfMap[action.entity_id] || { conversions_7d: 0, spend_7d: 0 };\n  if (action.action_type === 'scale_budget') {\n    if (perf.conversions_7d < minConversions) { blockedActions.push({ ...action, block_reason: `Insufficient conversions: ${perf.conversions_7d} < ${minConversions}` }); continue; }\n    const changePct = Math.abs(action.delta?.budget_change_pct || 0);\n    if (changePct > maxBudgetChangePct) { blockedActions.push({ ...action, block_reason: `Budget change ${changePct}% exceeds cap ${maxBudgetChangePct}%` }); continue; }\n  }\n  safeActions.push({ ...action, plan_id: plan.plan_id, perf });\n}\nif (safeActions.length === 0) throw new Error(`All ${actions.length} actions blocked. ${JSON.stringify(blockedActions)}`);\nreturn safeActions.map(a => ({ json: a }));"
       },
       "name": "Enforce Hard Rules",
       "type": "n8n-nodes-base.code",
@@ -86,29 +74,17 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/{{v19.0}}/{{$json.entity_id}}",
+        "url": "=https://graph.facebook.com/v19.0/{{$json.entity_id}}",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "access_token", "value": "={{REDACTED_META_TOKEN}}" }
+            { "name": "access_token", "value": "YOUR_META_ACCESS_TOKEN_HERE" }
           ]
         },
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "status",
-              "value": "={{$json.action_type === 'pause' ? 'PAUSED' : undefined}}"
-            },
-            {
-              "name": "daily_budget",
-              "value": "={{$json.action_type === 'scale_budget' ? $json.delta?.new_daily_budget : undefined}}"
-            }
-          ]
-        },
-        "options": {
-          "retry": { "enabled": true, "maxTries": 2, "waitBetweenTries": 3000 }
-        }
+        "specifyBody": "json",
+        "jsonBody": "={{$json.action_type === 'pause' ? '{\"status\":\"PAUSED\"}' : $json.action_type === 'scale_budget' ? JSON.stringify({daily_budget: $json.delta?.new_daily_budget}) : '{}'}}",
+        "options": { "retry": { "enabled": true, "maxTries": 2, "waitBetweenTries": 3000 } }
       },
       "name": "Execute Meta API Call",
       "type": "n8n-nodes-base.httpRequest",
@@ -119,10 +95,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO actions_executed (plan_id, entity_level, entity_id, action_type, meta_api_call, meta_api_response, status, executed_at)\nVALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 'EXECUTED', NOW());",
-        "additionalFields": {
-          "queryParams": "=[$json.plan_id, $json.entity_level, $json.entity_id, $json.action_type, JSON.stringify($json), JSON.stringify($('Execute Meta API Call').item.json)]"
-        },
+        "query": "={{`INSERT INTO actions_executed (plan_id, entity_level, entity_id, action_type, meta_api_call, meta_api_response, status, executed_at) VALUES ('${$json.plan_id}', '${$json.entity_level}', '${$json.entity_id}', '${$json.action_type}', '${JSON.stringify($json).replace(/'/g,\"''\")}'::jsonb, '${JSON.stringify($('Execute Meta API Call').item.json).replace(/'/g,\"''\")}'::jsonb, 'EXECUTED', NOW())`}}",
         "options": {}
       },
       "name": "Log Execution",
@@ -134,10 +107,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE action_plans SET status = 'EXECUTED' WHERE plan_id = $1;",
-        "additionalFields": {
-          "queryParams": "=[$json.plan_id]"
-        },
+        "query": "={{`UPDATE action_plans SET status = 'EXECUTED' WHERE plan_id = '${$json.plan_id}'`}}",
         "options": {}
       },
       "name": "Mark Plan Executed",
@@ -149,15 +119,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{https://hooks.slack.com/services/REDACTED}}",
+        "url": "https://hooks.slack.com/services/YOUR_WEBHOOK_URL_HERE",
         "sendBody": true,
         "bodyParameters": {
-          "parameters": [
-            {
-              "name": "text",
-              "value": "=✅ *Action Executed*\\n• Type: `{{$json.action_type}}`\\n• Entity: `{{$json.entity_name || $json.entity_id}}` ({{$json.entity_level}})\\n• Plan: `{{$json.plan_id}}`\\n• Approved by: {{$('Parse Slack Payload').item.json.user}}\\n\\n_To rollback: go to Meta Ads Manager and manually re-enable the entity, or set status back to ACTIVE via the API._"
-            }
-          ]
+          "parameters": [{
+            "name": "text",
+            "value": "=✅ *Action Executed*\\n• Type: `{{$json.action_type}}`\\n• Entity: `{{$json.entity_name || $json.entity_id}}` ({{$json.entity_level}})\\n• Plan: `{{$json.plan_id}}`\\n• Approved by: {{$('Parse Slack Payload').item.json.user}}\\n\\n_To rollback: re-enable entity in Meta Ads Manager or POST status=ACTIVE to the API._"
+          }]
         },
         "options": {}
       },
@@ -170,10 +138,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE action_plans SET status = 'REJECTED' WHERE plan_id = $1;",
-        "additionalFields": {
-          "queryParams": "=[$json.plan_id]"
-        },
+        "query": "={{`UPDATE action_plans SET status = 'REJECTED' WHERE plan_id = '${$json.plan_id}'`}}",
         "options": {}
       },
       "name": "Mark Rejected",
@@ -185,15 +150,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{https://hooks.slack.com/services/REDACTED}}",
+        "url": "https://hooks.slack.com/services/YOUR_WEBHOOK_URL_HERE",
         "sendBody": true,
         "bodyParameters": {
-          "parameters": [
-            {
-              "name": "text",
-              "value": "=❌ Plan `{{$('Parse Slack Payload').item.json.plan_id}}` rejected by {{$('Parse Slack Payload').item.json.user}}. No changes made to Meta."
-            }
-          ]
+          "parameters": [{
+            "name": "text",
+            "value": "=❌ Plan `{{$('Parse Slack Payload').item.json.plan_id}}` rejected by {{$('Parse Slack Payload').item.json.user}}. No changes made to Meta."
+          }]
         },
         "options": {}
       },
@@ -205,45 +168,16 @@
     }
   ],
   "connections": {
-    "Approval Webhook": {
-      "main": [[{ "node": "Parse Slack Payload", "type": "main", "index": 0 }]]
-    },
-    "Parse Slack Payload": {
-      "main": [[{ "node": "Check Approved", "type": "main", "index": 0 }]]
-    },
-    "Check Approved": {
-      "main": [
-        [{ "node": "Load Plan + Performance", "type": "main", "index": 0 }],
-        [{ "node": "Mark Rejected", "type": "main", "index": 0 }]
-      ]
-    },
-    "Load Plan + Performance": {
-      "main": [[{ "node": "Record Approval", "type": "main", "index": 0 }]]
-    },
-    "Record Approval": {
-      "main": [[{ "node": "Enforce Hard Rules", "type": "main", "index": 0 }]]
-    },
-    "Enforce Hard Rules": {
-      "main": [[{ "node": "Execute Meta API Call", "type": "main", "index": 0 }]]
-    },
-    "Execute Meta API Call": {
-      "main": [[
-        { "node": "Log Execution", "type": "main", "index": 0 }
-      ]]
-    },
-    "Log Execution": {
-      "main": [[
-        { "node": "Mark Plan Executed", "type": "main", "index": 0 },
-        { "node": "Confirm + Rollback Instructions", "type": "main", "index": 0 }
-      ]]
-    },
-    "Mark Rejected": {
-      "main": [[{ "node": "Notify Rejection", "type": "main", "index": 0 }]]
-    }
+    "Approval Webhook": { "main": [[{ "node": "Parse Slack Payload", "type": "main", "index": 0 }]] },
+    "Parse Slack Payload": { "main": [[{ "node": "Check Approved", "type": "main", "index": 0 }]] },
+    "Check Approved": { "main": [[{ "node": "Load Plan + Performance", "type": "main", "index": 0 }], [{ "node": "Mark Rejected", "type": "main", "index": 0 }]] },
+    "Load Plan + Performance": { "main": [[{ "node": "Record Approval", "type": "main", "index": 0 }]] },
+    "Record Approval": { "main": [[{ "node": "Enforce Hard Rules", "type": "main", "index": 0 }]] },
+    "Enforce Hard Rules": { "main": [[{ "node": "Execute Meta API Call", "type": "main", "index": 0 }]] },
+    "Execute Meta API Call": { "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]] },
+    "Log Execution": { "main": [[{ "node": "Mark Plan Executed", "type": "main", "index": 0 }, { "node": "Confirm + Rollback Instructions", "type": "main", "index": 0 }]] },
+    "Mark Rejected": { "main": [[{ "node": "Notify Rejection", "type": "main", "index": 0 }]] }
   },
   "pinData": {},
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31"
-  }
+  "meta": { "instanceId": "b395e642078f5ed10edbf1c29001e3a2243f8ee6445e6cb97bb7046023115b31" }
 }
